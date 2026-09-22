@@ -1,0 +1,65 @@
+# =============================================================================
+# ConFam .gitignore
+# Engineering Rule 8: secrets are never in source.
+# =============================================================================
+
+# Environment files — NEVER commit real credentials
+.env
+.env.local
+.env.*.local
+.env.staging
+.env.production
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+*.egg
+
+# Test coverage
+coverage/
+.nyc_output/
+htmlcov/
+.pytest_cache/
+
+# Logs — Rule 8: logs must never contain plaintext secrets
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Database dumps — may contain PII (Rule 9)
+*.dump
+*.sql.gz
+
+# Kiro AI assistant files — not for source control
+.kiro/
+
+# Grounding documents
+docs/
+DECISIONS.md
+OPEN_QUESTIONS.md
+
+# Development convenience scripts
+smoke_test.py
+
+# Docker
+# (docker-compose.yml and Dockerfile are committed; local override is not)
+docker-compose.override.yml

@@ -1,0 +1,159 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # postgres
+  # Postgres 16 — matches the version used in CI (.github/workflows/ci.yml).
+  # The superuser is POSTGRES_USER (default: postgres); confam_app and
+  # confam_migrator are created by the `migrate` service, not here.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-confam}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Exposed for direct psql/pgAdmin access from the host.
+      # Using 5434 to avoid conflicts with any locally-installed Postgres on 5432/5433.
+      - "5434:5432"
+
+  # ---------------------------------------------------------------------------
+  # migrate
+  # One-shot init container. Runs db/bootstrap_roles.sh, which:
+  #   1. Waits until postgres is healthy (pg_isready loop inside the script).
+  #   2. Creates confam_migrator and confam_app roles via the postgres superuser.
+  #   3. Runs `alembic upgrade head` as confam_migrator.
+  # Exits 0 on success. settlement-engine and checkout depend on this with
+  # `condition: service_completed_successfully` — they never start against
+  # an unmigrated database.
+  # ---------------------------------------------------------------------------
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/db/bootstrap_roles.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-confam}
+      POSTGRES_SUPERUSER: postgres
+      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      CONFAM_APP_PASSWORD: ${CONFAM_APP_PASSWORD}
+      CONFAM_MIGRATOR_PASSWORD: ${CONFAM_MIGRATOR_PASSWORD}
+      ALEMBIC_DATABASE_URL: postgresql+psycopg2://confam_migrator:${CONFAM_MIGRATOR_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+
+  # ---------------------------------------------------------------------------
+  # settlement-engine
+  # Connects as confam_app (restricted role). See OQ-018 / migration 007.
+  # ---------------------------------------------------------------------------
+  settlement-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - uvicorn
+      - services.settlement_engine.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --log-level
+      - info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://confam_app:${CONFAM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+      PAYMENT_LINK_EXPIRY_SECONDS: ${PAYMENT_LINK_EXPIRY_SECONDS:-1800}
+      CHECKOUT_BASE_URL: ${CHECKOUT_BASE_URL:-http://localhost:8001}
+      PAYMENT_LINK_SIGNING_SECRET: ${PAYMENT_LINK_SIGNING_SECRET:-dev_signing_secret_replace_in_prod}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
+      PAYSTACK_WEBHOOK_SECRET: ${PAYSTACK_WEBHOOK_SECRET:-}
+      PAYSTACK_BASE_URL: ${PAYSTACK_BASE_URL:-https://api.paystack.co}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    ports:
+      - "8000:8000"
+
+  # ---------------------------------------------------------------------------
+  # checkout
+  # Connects as confam_app (same restricted role — reads payment_links only).
+  # ---------------------------------------------------------------------------
+  checkout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - uvicorn
+      - services.checkout.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8001"
+      - --log-level
+      - info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://confam_app:${CONFAM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+      PAYMENT_LINK_EXPIRY_SECONDS: ${PAYMENT_LINK_EXPIRY_SECONDS:-1800}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
+      PAYSTACK_BASE_URL: ${PAYSTACK_BASE_URL:-https://api.paystack.co}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    ports:
+      - "8001:8001"
+
+  # ---------------------------------------------------------------------------
+  # messaging
+  # Meta WhatsApp Cloud API webhook — merchant-facing ConFam thread (thread 2).
+  # Exposes port 8002. Point your Meta webhook URL here via ngrok:
+  #   ngrok http 8002
+  #   Meta webhook URL: https://<id>.ngrok.io/webhooks/whatsapp
+  #   Verify token: must match WHATSAPP_VERIFY_TOKEN in .env
+  # ---------------------------------------------------------------------------
+  messaging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - uvicorn
+      - services.messaging.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8002"
+      - --log-level
+      - info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://confam_app:${CONFAM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+      PAYMENT_LINK_EXPIRY_SECONDS: ${PAYMENT_LINK_EXPIRY_SECONDS:-1800}
+      CHECKOUT_BASE_URL: ${CHECKOUT_BASE_URL:-http://localhost:8001}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    ports:
+      - "8002:8002"
+
+volumes:
+  postgres_data:

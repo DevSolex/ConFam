@@ -1,0 +1,29 @@
+# docker-compose.test.yml
+#
+# Overlay for running the test suite against the containerised Postgres.
+# Usage (from repo root, after `docker compose up -d`):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm test
+#
+# This runs pytest inside a container that shares the same Docker network
+# as the running postgres service, using confam_app for integration tests
+# and confam_migrator for trigger-level / privilege tests — exactly the
+# same role separation as CI.
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["pytest", "tests/", "-v"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # confam_app — used for all application-behaviour tests
+      DATABASE_URL: postgresql://confam_app:${CONFAM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+      TEST_DATABASE_URL: postgresql://confam_app:${CONFAM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+      # confam_migrator — used for trigger-level / privilege tests
+      ALEMBIC_DATABASE_URL: postgresql+psycopg2://confam_migrator:${CONFAM_MIGRATOR_PASSWORD}@postgres:5432/${POSTGRES_DB:-confam}
+      PAYMENT_LINK_EXPIRY_SECONDS: ${PAYMENT_LINK_EXPIRY_SECONDS:-1800}
+      CHECKOUT_BASE_URL: http://checkout:8001
