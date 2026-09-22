@@ -1,0 +1,73 @@
+[project]
+name = "confam"
+version = "0.1.0"
+description = "ConFam — giving informal chat-commerce merchants a balance sheet"
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework — OQ-002 resolved: FastAPI
+    "fastapi==0.111.1",
+    "uvicorn[standard]==0.30.1",
+
+    # Database
+    "psycopg2-binary==2.9.13",
+    "alembic==1.13.2",
+
+    # Stellar rail — OQ-005 resolved: stellar-sdk (Python)
+    "stellar-sdk==9.0.0",
+
+    # Structured logging — OQ-009 resolved
+    "structlog==24.2.0",
+
+    # AWS SDK — OQ-007/OQ-008 resolved: Secrets Manager + SQS
+    "boto3==1.34.144",
+
+    # Sentry error tracking — OQ-009 resolved
+    "sentry-sdk[fastapi]==2.8.0",
+
+    # HTTP client for Paystack API calls and Meta WhatsApp Cloud API
+    "httpx==0.27.0",
+
+    # Cryptographic signing for payment link tokens (Rule 8)
+    "itsdangerous==2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.2.2",
+    "pytest-asyncio==0.23.7",
+    "httpx==0.27.0",
+    "ruff==0.5.4",
+    "mypy==1.10.1",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+  "confam",
+  "rails",
+  "rails.stellar",
+  "services",
+  "services.checkout",
+  "services.messaging",
+  "services.settlement_engine",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "no_double_count: idempotency tests (Rule 3 / Rule 11) — must pass before any settlement PR merges",
+    "ledger_append_only: Rule 2 structural enforcement tests",
+    "integration: tests that require a live Postgres instance",
+    "stellar_live: tests that make real network calls to testanchor.stellar.org — skip with -m 'not stellar_live' in offline CI",
+]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
