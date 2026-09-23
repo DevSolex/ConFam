@@ -1,0 +1,45 @@
+# Files excluded from every Docker image build.
+# Keep images lean and ensure secrets never bake into a layer.
+
+# Secret — never in an image (Engineering Rule 8)
+.env
+.env.*
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Local virtual environment — dependencies are installed inside the image
+.venv/
+venv/
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Version control
+.git/
+.gitignore
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# CI
+.github/
+
+# Logs
+*.log
+logs/
+
+# Docs / steering (not needed at runtime)
+docs/
+.kiro/
