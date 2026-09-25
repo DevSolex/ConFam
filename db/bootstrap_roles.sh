@@ -77,6 +77,13 @@ PGPASSWORD="${POSTGRES_SUPERUSER_PASSWORD}" \
        -c "GRANT CREATE ON SCHEMA public TO confam_migrator;"
 
 echo "[bootstrap] Running Alembic migrations as confam_migrator..."
+# Ensure confam_migrator can bypass RLS policies (required for migrations that
+# enable RLS on tables — confam_migrator must not be blocked by its own policies).
+# This requires superuser privilege and is done here before migrations run.
+PGPASSWORD="${POSTGRES_SUPERUSER_PASSWORD}" \
+  psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" \
+       -U "${POSTGRES_SUPERUSER}" -d postgres \
+       -c "ALTER ROLE confam_migrator BYPASSRLS;" 2>/dev/null || true
 alembic upgrade head
 
 echo "[bootstrap] Done. Schema is up to date."
