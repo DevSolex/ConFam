@@ -53,8 +53,10 @@ GRANT UPDATE (status) ON merchants TO confam_app;
 
 -- payout_accounts
 -- confam_app may read and insert (new rows supersede old ones — Rule 2/5).
--- No UPDATE at all: superseded_by is set only via insert-a-new-row workflow.
+-- UPDATE is column-scoped: superseded_by is set lazily when a pending change
+-- becomes active; change_requested_at is set at change-request time.
 GRANT SELECT, INSERT ON payout_accounts TO confam_app;
+GRANT UPDATE (superseded_by, change_requested_at) ON payout_accounts TO confam_app;
 
 -- payment_links
 -- confam_app may read, insert, and update status column only (state machine).
