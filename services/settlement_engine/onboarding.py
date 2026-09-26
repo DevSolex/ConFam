@@ -428,20 +428,29 @@ def request_change(
             f"Contact ConFam support or use the cancellation API."
         )
         try:
-            from services.messaging.main import send_payment_confirmed_notification as _send
-            # Reuse the send primitive — import the raw _send_whatsapp
             from services.messaging.main import _send_whatsapp
             _send_whatsapp(confam_thread_id, notification)
             log.info("payout_change_notification_sent", merchant_id=merchant_id, confam_thread_id=confam_thread_id)
         except Exception as exc:
-            # Non-fatal: log prominently but do not roll back the change request.
-            # The change IS pending — the notification failing doesn't cancel it.
-            # This should trigger an alert so the support team can follow up manually.
+            # Non-fatal: the change IS pending regardless of notification outcome.
+            # But this is a security-critical notification — if the merchant doesn't
+            # see it, they cannot react to an unauthorised change. Capture to Sentry
+            # so the support team is alerted immediately rather than discovering it
+            # on a routine log review.
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+            sentry_sdk.capture_message(
+                f"CRITICAL: payout account change notification failed for merchant {merchant_id}. "
+                f"Merchant may not have been notified. Manual follow-up required before "
+                f"active_from={pending.active_from}.",
+                level="fatal",
+            )
             log.error(
                 "payout_change_notification_FAILED",
                 merchant_id=merchant_id,
+                active_from=str(pending.active_from),
                 error=str(exc),
-                note="MANUAL FOLLOW-UP REQUIRED — merchant may not have been notified of this change",
+                note="MANUAL FOLLOW-UP REQUIRED — Sentry alert raised",
             )
 
     log.info(
