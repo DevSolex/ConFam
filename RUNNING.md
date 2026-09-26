@@ -39,15 +39,21 @@ The remaining variables (Twilio, Paystack, Stellar, AWS, Sentry) are placeholder
 
 > **Added or changed a dependency in `pyproject.toml`? Run `docker compose build` before `docker compose up`, not just `up`.** Docker caches the dependency install layer — without a rebuild, new packages won't exist inside the containers.
 
+The settlement engine has no host-exposed port by default (OQ-022 network isolation). Use the appropriate compose command:
+
 ```bash
+# Normal usage — settlement-engine internal only (no direct curl access from host)
 docker compose up --build
+
+# Development — exposes settlement-engine on localhost:8000 for curl/ngrok/smoke tests
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
 What happens, in order:
 1. `postgres` starts and becomes healthy (`pg_isready` passes).
 2. `migrate` runs `db/bootstrap_roles.sh`: creates `confam_app` and `confam_migrator` roles, then applies all Alembic migrations. Exits 0.
-3. `settlement-engine` starts on port 8000.
-4. `checkout` starts on port 8001.
+3. `settlement-engine` starts (internal only unless using docker-compose.dev.yml).
+4. `checkout` starts on port 8001, `messaging` on port 8002.
 
 First build takes ~2 minutes (downloading base image, installing Python dependencies). Subsequent starts are fast — Docker caches the dependency layer unless `pyproject.toml` changes.
 

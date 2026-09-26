@@ -1,0 +1,19 @@
+# docker-compose.dev.yml
+#
+# Development override: exposes settlement-engine port 8000 to the host.
+# This is intentionally NOT in docker-compose.yml (OQ-022 network isolation).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Use this when you need to:
+#   - Call POST /links or POST /merchants directly from curl/Postman
+#   - Receive Paystack webhooks via ngrok pointed at localhost:8000
+#   - Run the smoke test script (smoke_test.py) from outside Docker
+#
+# Do NOT use this override in staging or production.
+
+services:
+  settlement-engine:
+    ports:
+      - "8000:8000"

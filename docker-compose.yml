@@ -55,6 +55,11 @@ services:
   # ---------------------------------------------------------------------------
   # settlement-engine
   # Connects as confam_app (restricted role). See OQ-018 / migration 007.
+  #
+  # OQ-022 (network isolation): no host port exposed here. The settlement
+  # engine is only reachable from within the Docker network (by messaging,
+  # checkout, and the webhook endpoints that Paystack/Meta call into).
+  # For local development, use docker-compose.dev.yml which adds port 8000.
   # ---------------------------------------------------------------------------
   settlement-engine:
     build:
@@ -80,11 +85,13 @@ services:
       PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
       PAYSTACK_WEBHOOK_SECRET: ${PAYSTACK_WEBHOOK_SECRET:-}
       PAYSTACK_BASE_URL: ${PAYSTACK_BASE_URL:-https://api.paystack.co}
+      PAYOUT_ACCOUNT_COOLING_OFF_SECONDS: ${PAYOUT_ACCOUNT_COOLING_OFF_SECONDS:-172800}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SENTRY_DSN: ${SENTRY_DSN:-}
-    ports:
-      - "8000:8000"
+    # No ports: block — settlement-engine is internal only.
+    # Paystack and Meta webhooks reach it via the checkout/messaging services
+    # or through a reverse proxy in production.
 
   # ---------------------------------------------------------------------------
   # checkout
