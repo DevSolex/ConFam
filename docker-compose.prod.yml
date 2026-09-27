@@ -1,0 +1,54 @@
+# docker-compose.prod.yml
+#
+# Production overlay — adds Caddy reverse proxy for HTTPS termination.
+# Removes direct host port exposure from checkout/messaging (Caddy handles it).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Caddy handles:
+#   - Automatic TLS via Let's Encrypt (requires ports 80+443 open on the instance)
+#   - Routing public traffic to the correct internal service
+#   - Keeping settlement-engine's internal endpoints off the public internet
+#
+# The sslip.io hostname is set via PUBLIC_HOSTNAME in .env:
+#   PUBLIC_HOSTNAME=54-123-45-67.sslip.io
+#
+# See DEPLOYMENT.md for provisioning steps.
+
+services:
+  # Override checkout: remove direct host port — Caddy handles public traffic
+  checkout:
+    ports: []
+
+  # Override messaging: remove direct host port — Caddy handles public traffic
+  messaging:
+    ports: []
+
+  # Override postgres: remove host port — not needed in production
+  postgres:
+    ports: []
+
+  # Caddy reverse proxy — public HTTPS termination
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME}
+    depends_on:
+      - checkout
+      - messaging
+      - settlement-engine
+    networks:
+      - default
+
+volumes:
+  caddy_data:
+  caddy_config:
