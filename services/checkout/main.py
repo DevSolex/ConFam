@@ -44,6 +44,10 @@ app = FastAPI(
 
 app.include_router(pay_router)
 
+# Rate limiting — in-process sliding window (production: replace with Redis/WAF)
+from services.checkout.middleware import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
+
 
 # ---------------------------------------------------------------------------
 # Response model (used by tests and JSON clients)
