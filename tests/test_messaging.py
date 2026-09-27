@@ -384,6 +384,247 @@ class TestWhatsAppWebhook:
 # Payment confirmation notification
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# CANCEL / STOP command (OQ-025)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+class TestCancelCommand:
+    BASE_URL = "http://test"
+
+    def _signed_post(self, from_id: str, text: str, secret: str) -> tuple[bytes, dict]:
+        import hashlib, hmac, json
+        payload = json.dumps({
+            "entry": [{"changes": [{"value": {"messages": [
+                {"from": from_id, "type": "text", "text": {"body": text}}
+            ]}}]}]
+        }).encode()
+        sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return payload, {"X-Hub-Signature-256": sig, "Content-Type": "application/json"}
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_pending_change_succeeds(
+        self, test_merchant, migrator_conn, monkeypatch
+    ):
+        """CANCEL when a pending change exists — cancels it and confirms."""
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
+        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
+        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
+        monkeypatch.setenv("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "3600")
+
+        from_id = test_merchant["from_id"]
+        merchant_id = test_merchant["merchant_id"]
+
+        # Insert a pending payout account change
+        with migrator_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
+                "account_holder_name, verification_method, verified_at, active_from, "
+                "paystack_subaccount_code, change_requested_at) "
+                "VALUES (%s, 'enc', 'enc', 'Name', 'bank_api_resolve', now(), "
+                "now() + interval '3600 seconds', 'ACCT_pending', now()) "
+                "RETURNING payout_account_id",
+                (merchant_id,),
+            )
+        migrator_conn.commit()
+
+        payload, headers = self._signed_post(from_id, "CANCEL", "test_secret")
+
+        with patch("services.messaging.main.httpx.post") as mock_send:
+            mock_send.return_value = MagicMock(status_code=200)
+            mock_send.return_value.raise_for_status = MagicMock()
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL
+            ) as client:
+                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
+
+        assert resp.status_code == 200
+        mock_send.assert_called_once()
+        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
+        assert "cancelled" in sent_body.lower()
+
+    @pytest.mark.asyncio
+    async def test_stop_command_also_cancels(self, test_merchant, migrator_conn, monkeypatch):
+        """STOP is synonymous with CANCEL."""
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
+        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
+        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
+        monkeypatch.setenv("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "3600")
+
+        from_id = test_merchant["from_id"]
+        merchant_id = test_merchant["merchant_id"]
+
+        with migrator_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
+                "account_holder_name, verification_method, verified_at, active_from, "
+                "paystack_subaccount_code, change_requested_at) "
+                "VALUES (%s, 'enc', 'enc', 'Name', 'bank_api_resolve', now(), "
+                "now() + interval '3600 seconds', 'ACCT_stop_test', now())",
+                (merchant_id,),
+            )
+        migrator_conn.commit()
+
+        payload, headers = self._signed_post(from_id, "STOP", "test_secret")
+
+        with patch("services.messaging.main.httpx.post") as mock_send:
+            mock_send.return_value = MagicMock(status_code=200)
+            mock_send.return_value.raise_for_status = MagicMock()
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL
+            ) as client:
+                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
+
+        assert resp.status_code == 200
+        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
+        assert "cancelled" in sent_body.lower()
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_no_pending_change_informs_merchant(
+        self, test_merchant, monkeypatch
+    ):
+        """CANCEL when nothing is pending — polite message, no error."""
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
+        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
+        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
+
+        from_id = test_merchant["from_id"]
+        payload, headers = self._signed_post(from_id, "CANCEL", "test_secret")
+
+        with patch("services.messaging.main.httpx.post") as mock_send:
+            mock_send.return_value = MagicMock(status_code=200)
+            mock_send.return_value.raise_for_status = MagicMock()
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL
+            ) as client:
+                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
+
+        assert resp.status_code == 200
+        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
+        # Merchant told there's nothing to cancel — not an error message
+        assert "don\'t have a pending" in sent_body.lower() or "no pending" in sent_body.lower() or "don" in sent_body.lower()
+
+
+
+
+# ---------------------------------------------------------------------------
+# CANCEL / STOP command (OQ-025)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+class TestCancelCommand:
+    BASE_URL = "http://test"
+
+    def _signed_post(self, from_id: str, text: str, secret: str) -> tuple[bytes, dict]:
+        import hashlib, hmac as _hmac, json
+        payload = json.dumps({
+            "entry": [{"changes": [{"value": {"messages": [
+                {"from": from_id, "type": "text", "text": {"body": text}}
+            ]}}]}]
+        }).encode()
+        sig = "sha256=" + _hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return payload, {"X-Hub-Signature-256": sig, "Content-Type": "application/json"}
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_pending_change_succeeds(
+        self, test_merchant, migrator_conn, monkeypatch
+    ):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
+        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
+        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
+        monkeypatch.setenv("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "3600")
+
+        from_id = test_merchant["from_id"]
+        merchant_id = test_merchant["merchant_id"]
+
+        with migrator_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
+                "account_holder_name, verification_method, verified_at, active_from, "
+                "paystack_subaccount_code, change_requested_at) "
+                "VALUES (%s, 'enc', 'enc', 'Name', 'bank_api_resolve', now(), "
+                "now() + interval '3600 seconds', 'ACCT_cancel_test', now())",
+                (merchant_id,),
+            )
+        migrator_conn.commit()
+
+        payload, headers = self._signed_post(from_id, "CANCEL", "test_secret")
+
+        with patch("services.messaging.main.httpx.post") as mock_send:
+            mock_send.return_value = MagicMock(status_code=200)
+            mock_send.return_value.raise_for_status = MagicMock()
+            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
+
+        assert resp.status_code == 200
+        mock_send.assert_called_once()
+        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
+        assert "cancelled" in sent_body.lower()
+
+    @pytest.mark.asyncio
+    async def test_stop_is_synonymous_with_cancel(
+        self, test_merchant, migrator_conn, monkeypatch
+    ):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
+        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
+        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
+        monkeypatch.setenv("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "3600")
+
+        from_id = test_merchant["from_id"]
+        merchant_id = test_merchant["merchant_id"]
+
+        with migrator_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
+                "account_holder_name, verification_method, verified_at, active_from, "
+                "paystack_subaccount_code, change_requested_at) "
+                "VALUES (%s, 'enc', 'enc', 'Name', 'bank_api_resolve', now(), "
+                "now() + interval '3600 seconds', 'ACCT_stop_test', now())",
+                (merchant_id,),
+            )
+        migrator_conn.commit()
+
+        payload, headers = self._signed_post(from_id, "stop", "test_secret")
+
+        with patch("services.messaging.main.httpx.post") as mock_send:
+            mock_send.return_value = MagicMock(status_code=200)
+            mock_send.return_value.raise_for_status = MagicMock()
+            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
+
+        assert resp.status_code == 200
+        assert "cancelled" in mock_send.call_args.kwargs["json"]["text"]["body"].lower()
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_nothing_pending_sends_polite_message(
+        self, test_merchant, monkeypatch
+    ):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
+        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
+        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
+
+        from_id = test_merchant["from_id"]
+        payload, headers = self._signed_post(from_id, "CANCEL", "test_secret")
+
+        with patch("services.messaging.main.httpx.post") as mock_send:
+            mock_send.return_value = MagicMock(status_code=200)
+            mock_send.return_value.raise_for_status = MagicMock()
+            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
+
+        assert resp.status_code == 200
+        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"].lower()
+        assert any(phrase in sent_body for phrase in ["pending", "don", "no pending"])
+
+
+
 class TestPaymentConfirmedNotification:
     def test_sends_to_meta_with_correct_content(self, monkeypatch):
         monkeypatch.setenv("WHATSAPP_APP_SECRET", TEST_APP_SECRET)

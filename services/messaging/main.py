@@ -344,6 +344,10 @@ async def whatsapp_webhook(request: Request) -> Response:
             )
             return Response(status_code=200)
 
+        # Handle CANCEL / STOP — payout account change cancellation (OQ-025)
+        if message_text.strip().upper() in ("CANCEL", "STOP"):
+            return _handle_cancel_command(conn, from_id, merchant_id)
+
         # Parse PAY command
         try:
             amount_minor_units, description = parse_pay_command(message_text)
@@ -388,6 +392,59 @@ async def whatsapp_webhook(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 # Payment confirmation notification (called by settlement engine)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# CANCEL command handler (OQ-025)
+# ---------------------------------------------------------------------------
+
+def _handle_cancel_command(conn, from_id: str, merchant_id: str) -> Response:
+    """
+    Handle a CANCEL or STOP reply from a merchant during the cooling-off window.
+
+    If a pending payout account change exists, cancel it and confirm to the
+    merchant. If there is nothing to cancel, inform them politely.
+
+    This closes OQ-025: WhatsApp-based cancellation of a pending change,
+    in addition to the existing API endpoint
+    (POST /merchants/{id}/payout-account/change/cancel).
+    """
+    from confam.payout_accounts import (
+        NoPendingChange,
+        cancel_pending_change,
+        get_pending_change,
+    )
+
+    pending = get_pending_change(conn, merchant_id)
+    if pending is None:
+        _send_whatsapp(
+            from_id,
+            "You don't have a pending payout account change to cancel. "
+            "If you recently made a change request and it didn't arrive, "
+            "please contact ConFam support.",
+        )
+        log.info("cancel_command_no_pending_change", from_id=from_id, merchant_id=merchant_id)
+        return Response(status_code=200)
+
+    try:
+        cancel_pending_change(conn, merchant_id)
+        _send_whatsapp(
+            from_id,
+            "✅ Payout account change cancelled.\n\n"
+            "Your existing bank account remains active. "
+            "No changes were made.",
+        )
+        log.info("cancel_command_succeeded", from_id=from_id, merchant_id=merchant_id)
+    except NoPendingChange:
+        # Race condition — change activated between get and cancel
+        _send_whatsapp(
+            from_id,
+            "The pending change was already processed and is now active. "
+            "If you did not authorise this, contact ConFam support immediately.",
+        )
+        log.warning("cancel_command_race_condition", from_id=from_id, merchant_id=merchant_id)
+
+    return Response(status_code=200)
+
 
 def send_payment_confirmed_notification(
     merchant_confam_thread_id: str,
