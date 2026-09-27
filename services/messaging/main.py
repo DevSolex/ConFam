@@ -138,8 +138,12 @@ class ParseError(ValueError):
 
 USAGE_MESSAGE = (
     "Sorry, I didn't understand that.\n\n"
-    "To create a payment link, send:\n"
-    "  PAY <amount in naira> <description>\n\n"
+    "Available commands:\n"
+    "  REGISTER <business name> — register your business\n"
+    "  ONBOARD <account number> <bank code> — set up your payout account\n"
+    "  UPDATE <account number> <bank code> — change payout account\n"
+    "  PAY <amount in naira> <description> — create a payment link\n"
+    "  CANCEL — cancel a pending account change\n\n"
     "Example:\n"
     "  PAY 750 Ankara fabric x2"
 )
@@ -185,6 +189,46 @@ def parse_pay_command(text: str) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 # Merchant resolution (updated for Meta's bare-digit ID format)
 # ---------------------------------------------------------------------------
+
+
+def parse_register_command(text: str) -> str:
+    """
+    Parse 'REGISTER <business name>' from the merchant's message.
+    Returns the business name.
+    Raises ParseError if format is wrong.
+    """
+    parts = text.strip().split(None, 1)
+    if len(parts) < 2 or parts[0].upper() != "REGISTER":
+        raise ParseError(USAGE_MESSAGE)
+    business_name = parts[1].strip()
+    if not business_name:
+        raise ParseError("Please include your business name.\nExample: REGISTER Adaeze Fashion Store")
+    if len(business_name) > 200:
+        raise ParseError("Business name must be 200 characters or fewer.")
+    return business_name
+
+
+def parse_account_command(text: str, keyword: str) -> tuple[str, str]:
+    """
+    Parse 'ONBOARD <account_number> <bank_code>' or
+          'UPDATE  <account_number> <bank_code>'.
+    Returns (account_number, bank_code).
+    Raises ParseError on bad format.
+    """
+    parts = text.strip().split()
+    if len(parts) != 3 or parts[0].upper() != keyword.upper():
+        raise ParseError(
+            f"Format: {keyword.upper()} <10-digit account number> <bank code>\n"
+            f"Example: {keyword.upper()} 0123456789 058\n\n"
+            "To find your bank code, ask ConFam support."
+        )
+    account_number, bank_code = parts[1], parts[2]
+    if not account_number.isdigit() or len(account_number) != 10:
+        raise ParseError("Account number must be exactly 10 digits.\nExample: 0123456789")
+    if not bank_code.isdigit():
+        raise ParseError("Bank code must be numeric.\nExample: 058 for GTBank")
+    return account_number, bank_code
+
 
 class UnregisteredSender(Exception):
     """Raised when the sender's WhatsApp ID isn't registered as a merchant."""
@@ -322,14 +366,27 @@ async def whatsapp_webhook(request: Request) -> Response:
     checkout_base = os.environ.get("CHECKOUT_BASE_URL", "http://localhost:8001")
 
     with get_conn() as conn:
+        # Handle REGISTER before merchant resolution — unregistered senders can register
+        cmd_word = message_text.strip().split()[0].upper() if message_text.strip() else ""
+        if cmd_word == "REGISTER":
+            try:
+                business_name = parse_register_command(message_text)
+            except ParseError as exc:
+                _send_whatsapp(from_id, str(exc))
+                return Response(status_code=200)
+            return _handle_register_command(conn, from_id, business_name)
+
         # Resolve sender to merchant
         try:
             merchant = resolve_merchant(conn, from_id)
         except UnregisteredSender:
             _send_whatsapp(
                 from_id,
-                "You're not registered with ConFam. "
-                "Please contact support to get started.",
+                "You're not registered with ConFam yet.\n\n"
+                "To get started, send:\n"
+                "  REGISTER <your business name>\n\n"
+                "Example:\n"
+                "  REGISTER Adaeze Fashion Store",
             )
             log.warning("whatsapp_unregistered_sender", from_id=from_id)
             return Response(status_code=200)
@@ -344,9 +401,27 @@ async def whatsapp_webhook(request: Request) -> Response:
             )
             return Response(status_code=200)
 
-        # Handle CANCEL / STOP — payout account change cancellation (OQ-025)
-        if message_text.strip().upper() in ("CANCEL", "STOP"):
+        # Route commands
+        cmd = message_text.strip().split()[0].upper() if message_text.strip() else ""
+
+        if cmd in ("CANCEL", "STOP"):
             return _handle_cancel_command(conn, from_id, merchant_id)
+
+        if cmd == "ONBOARD":
+            try:
+                account_number, bank_code = parse_account_command(message_text, "ONBOARD")
+            except ParseError as exc:
+                _send_whatsapp(from_id, str(exc))
+                return Response(status_code=200)
+            return _handle_onboard_command(conn, from_id, merchant_id, account_number, bank_code)
+
+        if cmd == "UPDATE":
+            try:
+                account_number, bank_code = parse_account_command(message_text, "UPDATE")
+            except ParseError as exc:
+                _send_whatsapp(from_id, str(exc))
+                return Response(status_code=200)
+            return _handle_update_command(conn, from_id, merchant_id, account_number, bank_code)
 
         # Parse PAY command
         try:
@@ -396,6 +471,197 @@ async def whatsapp_webhook(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 # CANCEL command handler (OQ-025)
 # ---------------------------------------------------------------------------
+
+
+def _handle_register_command(conn, from_id: str, business_name: str) -> Response:
+    """
+    REGISTER <business name> — create a new merchant account.
+
+    Creates a merchant with status=pending_verification and confam_thread_id
+    set to the sender's WhatsApp ID (bare digits). The merchant can then
+    use ONBOARD to add their bank account.
+    """
+    import psycopg2.errors as pg_errors
+
+    # Check if already registered
+    existing = resolve_merchant.__wrapped__(conn, from_id) if hasattr(resolve_merchant, '__wrapped__') else None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO merchants (whatsapp_number, confam_thread_id, business_name, status)
+                   VALUES (%s, %s, %s, 'pending_verification') RETURNING merchant_id""",
+                (f"+{from_id}", from_id, business_name),
+            )
+            merchant_id = str(cur.fetchone()[0])
+        conn.commit()
+        _send_whatsapp(
+            from_id,
+            f"✅ Business registered!\n\n"
+            f"Business: {business_name}\n\n"
+            f"Next step — set up your payout account:\n"
+            f"Send: ONBOARD <account number> <bank code>\n"
+            f"Example: ONBOARD 0123456789 058",
+        )
+        log.info("merchant_registered_via_whatsapp", from_id=from_id, merchant_id=merchant_id)
+    except Exception as exc:
+        if "unique" in str(exc).lower():
+            conn.rollback()
+            _send_whatsapp(
+                from_id,
+                "You already have a ConFam account.\n"
+                "Send ONBOARD <account number> <bank code> to set up your payout account,\n"
+                "or PAY <amount> <description> to create a payment link.",
+            )
+        else:
+            conn.rollback()
+            log.error("register_command_failed", from_id=from_id, error=str(exc))
+            _send_whatsapp(from_id, "Registration failed. Please try again or contact support.")
+    return Response(status_code=200)
+
+
+def _handle_onboard_command(conn, from_id: str, merchant_id: str, account_number: str, bank_code: str) -> Response:
+    """
+    ONBOARD <account_number> <bank_code> — first-time payout account setup.
+    Calls Paystack bank/resolve + create_subaccount in-process.
+    """
+    from confam.paystack import PaystackError, resolve_bank_account, create_subaccount
+    from confam.payout_accounts import PendingChangeAlreadyExists
+
+    # Verify bank account with Paystack
+    try:
+        resolved = resolve_bank_account(account_number=account_number, bank_code=bank_code)
+    except PaystackError as exc:
+        _send_whatsapp(
+            from_id,
+            f"❌ Could not verify that bank account.\n\n"
+            f"Please check the account number and bank code are correct.\n"
+            f"Error: {str(exc)[:100]}",
+        )
+        log.warning("onboard_resolution_failed", from_id=from_id, error=str(exc))
+        return Response(status_code=200)
+
+    # Get merchant's business name for Paystack subaccount
+    with conn.cursor() as cur:
+        cur.execute("SELECT business_name FROM merchants WHERE merchant_id = %s", (merchant_id,))
+        row = cur.fetchone()
+    business_name = (row[0] if row and row[0] else resolved.account_name)
+
+    try:
+        subaccount = create_subaccount(
+            business_name=business_name,
+            bank_code=bank_code,
+            account_number=account_number,
+            percentage_charge=0.0,
+        )
+    except PaystackError as exc:
+        _send_whatsapp(from_id, "❌ Account setup failed. Please try again or contact support.")
+        log.error("onboard_subaccount_failed", from_id=from_id, error=str(exc))
+        return Response(status_code=200)
+
+    # Write PayoutAccount and activate merchant
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO payout_accounts (
+                    merchant_id, bank_account_number, bank_code, account_holder_name,
+                    verification_method, verified_at, active_from, paystack_subaccount_code
+                ) VALUES (%s, %s, %s, %s, 'bank_api_resolve', now(), now(), %s)""",
+                (merchant_id, account_number, bank_code, resolved.account_name, subaccount.subaccount_code),
+            )
+            cur.execute("UPDATE merchants SET status = 'active' WHERE merchant_id = %s", (merchant_id,))
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        if "unique" in str(exc).lower():
+            _send_whatsapp(
+                from_id,
+                "You already have an active payout account.\n"
+                "To change it, send: UPDATE <account number> <bank code>",
+            )
+        else:
+            log.error("onboard_db_write_failed", from_id=from_id, error=str(exc))
+            _send_whatsapp(from_id, "❌ Setup failed. Please try again or contact support.")
+        return Response(status_code=200)
+
+    masked = "*" * (len(account_number) - 4) + account_number[-4:]
+    _send_whatsapp(
+        from_id,
+        f"✅ Payout account set up!\n\n"
+        f"Account holder: {resolved.account_name}\n"
+        f"Account: {masked}\n\n"
+        f"You're ready to accept payments.\n"
+        f"Send: PAY <amount> <description>\n"
+        f"Example: PAY 750 Ankara fabric x2",
+    )
+    log.info("onboard_command_succeeded", from_id=from_id, merchant_id=merchant_id)
+    return Response(status_code=200)
+
+
+def _handle_update_command(conn, from_id: str, merchant_id: str, account_number: str, bank_code: str) -> Response:
+    """
+    UPDATE <account_number> <bank_code> — change payout account with cooling-off.
+    Sends immediate notification. Merchant can reply CANCEL to abort.
+    """
+    from confam.paystack import PaystackError, resolve_bank_account, create_subaccount
+    from confam.payout_accounts import (
+        NoActivePayoutAccount, PendingChangeAlreadyExists, request_payout_account_change,
+    )
+
+    try:
+        resolved = resolve_bank_account(account_number=account_number, bank_code=bank_code)
+    except PaystackError as exc:
+        _send_whatsapp(from_id, f"❌ Could not verify that bank account.\nError: {str(exc)[:100]}")
+        return Response(status_code=200)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT business_name FROM merchants WHERE merchant_id = %s", (merchant_id,))
+        row = cur.fetchone()
+    business_name = (row[0] if row and row[0] else resolved.account_name)
+
+    try:
+        subaccount = create_subaccount(
+            business_name=business_name, bank_code=bank_code,
+            account_number=account_number, percentage_charge=0.0,
+        )
+    except PaystackError as exc:
+        _send_whatsapp(from_id, "❌ Update failed. Please try again or contact support.")
+        return Response(status_code=200)
+
+    try:
+        pending = request_payout_account_change(
+            conn, merchant_id=merchant_id,
+            bank_account_number=account_number, bank_code=bank_code,
+            account_holder_name=resolved.account_name,
+            paystack_subaccount_code=subaccount.subaccount_code,
+        )
+    except NoActivePayoutAccount:
+        _send_whatsapp(
+            from_id,
+            "You don't have a payout account set up yet.\n"
+            "Send: ONBOARD <account number> <bank code>",
+        )
+        return Response(status_code=200)
+    except PendingChangeAlreadyExists:
+        _send_whatsapp(
+            from_id,
+            "⚠️ You already have a pending account change.\n"
+            "Reply CANCEL to cancel it first, then send UPDATE again.",
+        )
+        return Response(status_code=200)
+
+    import os as _os
+    cooling = int(_os.environ.get("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "172800")) // 3600
+    masked = "*" * (len(account_number) - 4) + account_number[-4:]
+    _send_whatsapp(
+        from_id,
+        f"⚠️ Payout account change requested\n\n"
+        f"New account: {masked} ({resolved.account_name})\n"
+        f"Takes effect in: {cooling} hours\n\n"
+        f"If this wasn't you, reply CANCEL immediately.",
+    )
+    log.info("update_command_succeeded", from_id=from_id, merchant_id=merchant_id)
+    return Response(status_code=200)
+
 
 def _handle_cancel_command(conn, from_id: str, merchant_id: str) -> Response:
     """
