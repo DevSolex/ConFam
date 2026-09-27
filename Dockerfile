@@ -22,7 +22,8 @@ COPY . .
 # Install all dependencies including dev extras (pytest, httpx, etc.).
 # The package itself is installed in editable mode so imports resolve
 # correctly from /app without needing to rebuild on every code change.
-RUN pip install --no-cache-dir -e ".[dev]"
+# Increased timeout and retries for environments with slow network.
+RUN pip install --no-cache-dir --timeout=120 --retries=5 -e ".[dev]"
 
 # Ensure the bootstrap script is executable.
 RUN chmod +x /app/db/bootstrap_roles.sh
