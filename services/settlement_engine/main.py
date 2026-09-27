@@ -28,6 +28,7 @@ from confam.db import close_pool, get_conn
 from confam.links import LinkValidationError, create_link
 from services.settlement_engine.webhook import router as webhook_router
 from services.settlement_engine.onboarding import router as onboarding_router
+from services.settlement_engine.reconciliation import run_reconciliation
 
 log = structlog.get_logger()
 
@@ -148,3 +149,19 @@ def create_payment_link(body: CreateLinkRequest) -> CreateLinkResponse:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "settlement-engine"}
+
+
+@app.post("/internal/reconcile", status_code=200)
+def trigger_reconciliation() -> dict:
+    """
+    Trigger a reconciliation run against Paystack's transaction records.
+
+    This endpoint is called by the SQS worker on a 15-minute schedule (OQ-013).
+    It is on an /internal/ path — in production, restrict this to the Docker
+    network only (same isolation as the rest of settlement-engine, OQ-022).
+
+    Rule 7: mismatches are incidents, not silent retries. The job raises
+    Sentry alerts for any gap between Paystack's records and our ledger.
+    """
+    summary = run_reconciliation()
+    return {"status": "complete", **summary}
