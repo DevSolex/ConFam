@@ -50,8 +50,10 @@ else:
 "
 
 # Run Alembic migrations using the single Render DB user
-# ALEMBIC_DATABASE_URL and DATABASE_URL point to the same user on Render
-export ALEMBIC_DATABASE_URL="${DATABASE_URL}"
+# Render provides DATABASE_URL as postgresql:// — we must prefix it with
+# +psycopg2 so SQLAlchemy uses psycopg2-binary (installed) not psycopg3 (not installed).
+PSYCOPG2_URL="${DATABASE_URL/postgresql:\/\//postgresql+psycopg2:\/\/}"
+export ALEMBIC_DATABASE_URL="$PSYCOPG2_URL"
 
 echo "[render-bootstrap] Running Alembic migrations..."
 alembic upgrade head
