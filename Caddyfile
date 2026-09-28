@@ -1,0 +1,34 @@
+# Caddyfile — ConFam reverse proxy
+#
+# PUBLIC_HOSTNAME is injected from .env (e.g. 54-123-45-67.sslip.io).
+# Caddy automatically obtains and renews a Let's Encrypt TLS certificate.
+#
+# Public routes:
+#   /webhooks/whatsapp  → messaging:8002
+#   /webhooks/paystack  → settlement-engine:8000  (webhook path only)
+#   /{uuid}*            → checkout:8001
+#
+# settlement-engine's internal endpoints (/merchants, /links, /internal/*)
+# are NOT routed here — they stay inside the Docker network only (OQ-022).
+
+{$PUBLIC_HOSTNAME} {
+    # Meta WhatsApp webhook (POST inbound + GET verify-token handshake)
+    handle /webhooks/whatsapp* {
+        reverse_proxy messaging:8002
+    }
+
+    # Paystack webhook (POST only — Caddy forwards all methods)
+    handle /webhooks/paystack {
+        reverse_proxy settlement-engine:8000
+    }
+
+    # Checkout health check
+    handle /health {
+        reverse_proxy checkout:8001
+    }
+
+    # Buyer-facing checkout pages: /{uuid}, /{uuid}/json, /{uuid}/pay/bank
+    handle_path /* {
+        reverse_proxy checkout:8001
+    }
+}
