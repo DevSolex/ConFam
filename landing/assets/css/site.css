@@ -1,0 +1,1030 @@
+/* ============================================================================
+   ConFam landing site — shared stylesheet
+   Palette: signal green #12885a, deep ink #10241c, page #f2f5f3,
+            paper #fbfdfc, line #cfdad3, mint #d5f3e2
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Tokens
+   --------------------------------------------------------------------------- */
+
+:root {
+  --green: #12885a;
+  --green-strong: #0f7a50;   /* buttons/links: darkened for AA on paper */
+  --green-bright: #33a86f;   /* accents on dark bands */
+  --ink: #10241c;
+  --page: #f2f5f3;
+  --paper: #fbfdfc;
+  --line: #cfdad3;
+  --mint: #d5f3e2;
+  --mint-2: #c3ecdb;
+
+  --text: #10241c;
+  --text-soft: #466056;
+  --text-faint: #5b7267;
+
+  --btn-bg: var(--green-strong);
+  --btn-text: #ffffff;
+  --link: #0f7a50;
+
+  --band-bg: var(--ink);
+  --band-text: #eef7f2;
+  --band-soft: #b6c9c0;
+  --band-line: rgba(207, 218, 211, 0.22);
+
+  --focus: #12885a;
+  --shadow: 0 12px 30px rgba(16, 36, 28, 0.10);
+
+  --radius: 6px;
+  --maxw: 1080px;
+  --font-heading: "Bricolage Grotesque", "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --green: #33a86f;
+    --green-strong: #2ea370;
+    --ink: #0b1511;
+    --page: #0d1913;
+    --paper: #13251c;
+    --line: #243d31;
+    --mint: #1b3b2c;
+    --mint-2: #24493a;
+
+    --text: #e9f3ee;
+    --text-soft: #a9c0b5;
+    --text-faint: #83a096;
+
+    --btn-bg: #2ea370;
+    --btn-text: #0b1511;
+    --link: #6fd6a8;
+
+    --band-bg: #08110c;
+    --band-text: #eef7f2;
+    --band-soft: #a9c0b5;
+    --band-line: rgba(207, 218, 211, 0.18);
+
+    --focus: #6fd6a8;
+    --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+   --------------------------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--page);
+  color: var(--text);
+  line-height: 1.6;
+  font-size: 1rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+p {
+  color: var(--text);
+}
+
+a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+::selection {
+  background: var(--mint-2);
+  color: var(--ink);
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -3.5rem;
+  z-index: 100;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: 1rem;
+}
+
+.contain {
+  width: 100%;
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 2rem);
+}
+
+.section {
+  padding-block: clamp(3rem, 8vw, 5.5rem);
+}
+
+.section.paper-bg {
+  background: var(--paper);
+}
+
+.section.band {
+  background: var(--band-bg);
+}
+
+.section.band h1,
+.section.band h2,
+.section.band h3,
+.section.band p {
+  color: var(--band-text);
+}
+
+.section.band .soft {
+  color: var(--band-soft);
+}
+
+.section-heading {
+  font-size: clamp(1.7rem, 3.6vw, 2.4rem);
+  max-width: 42rem;
+}
+
+.soft {
+  color: var(--text-soft);
+}
+
+.lead {
+  font-size: 1.12rem;
+  color: var(--text-soft);
+  max-width: 40rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Buttons
+   --------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--btn-text);
+  background: var(--btn-bg);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 0.72rem 1.25rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn:hover {
+  background: var(--green);
+  color: var(--btn-text);
+  text-decoration: none;
+}
+
+.btn.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.btn.secondary:hover {
+  border-color: var(--green);
+  color: var(--link);
+  background: transparent;
+}
+
+.btn.arrow::after {
+  content: "→";
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Announcement bar
+   --------------------------------------------------------------------------- */
+
+.announce {
+  background: var(--band-bg);
+  color: var(--band-text);
+  font-size: 0.92rem;
+  text-align: center;
+  padding: 0.5rem 1rem;
+}
+
+.announce a {
+  color: #9bdfbe;
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+
+.announce a:hover {
+  color: #c9efdd;
+}
+
+@media (prefers-color-scheme: dark) {
+  .announce a {
+    color: #6fd6a8;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Header / nav
+   --------------------------------------------------------------------------- */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+@supports (background: color-mix(in srgb, red 50%, transparent)) {
+  .site-header {
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(6px);
+  }
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 0.8rem;
+}
+
+.wordmark {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1.4rem;
+  color: var(--text);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+
+.wordmark .dot {
+  color: var(--green);
+}
+
+.wordmark:hover {
+  text-decoration: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Hero
+   --------------------------------------------------------------------------- */
+
+.hero {
+  padding-block: clamp(3rem, 7vw, 5rem);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: clamp(2rem, 5vw, 3.5rem);
+  align-items: center;
+}
+
+.hero h1 {
+  font-size: clamp(2.1rem, 5vw, 3.3rem);
+  font-weight: 800;
+}
+
+.hero .lead {
+  margin-top: 1.1rem;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.8rem;
+}
+
+.hero-media {
+  position: relative;
+}
+
+.hero-media .photo {
+  aspect-ratio: 4 / 5;
+}
+
+.photo {
+  width: 100%;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--mint);
+  box-shadow: var(--shadow);
+}
+
+/* Floating example cards overlapping the hero image edge */
+
+.float-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.1rem;
+  width: min(20rem, 100%);
+  font-size: 0.92rem;
+}
+
+.float-card + .float-card {
+  margin-top: 1rem;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.6rem;
+}
+
+.tag-example {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  white-space: nowrap;
+}
+
+@media (min-width: 901px) {
+  .float-card.top {
+    position: absolute;
+    top: 2rem;
+    left: -2.4rem;
+  }
+
+  .float-card.bottom {
+    position: absolute;
+    bottom: 2.2rem;
+    right: -2rem;
+  }
+}
+
+/* Chat bubbles (ruled-ledger motif) */
+
+.chat {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.bubble {
+  border-radius: var(--radius);
+  padding: 0.5rem 0.8rem;
+  line-height: 1.45;
+}
+
+.bubble.bot {
+  background: var(--mint);
+  color: var(--ink);
+  justify-self: start;
+  max-width: 95%;
+}
+
+.bubble.buyer {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  justify-self: end;
+}
+
+.bubble .mono {
+  font-weight: 700;
+}
+
+.bubble .check {
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* Ledger card (ruled rows) */
+
+.ledger-rows {
+  border-top: 1px solid var(--line);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 27px,
+    var(--line) 27px,
+    var(--line) 28px
+  );
+}
+
+.ledger-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.7rem 0;
+  font-size: 0.92rem;
+}
+
+.ledger-row .v {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.ledger-foot {
+  border-top: 1px solid var(--line);
+  padding-top: 0.6rem;
+  margin-top: 0.2rem;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Split sections (text + image)
+   --------------------------------------------------------------------------- */
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 0.9fr;
+  gap: clamp(2rem, 5vw, 3.5rem);
+  align-items: center;
+}
+
+.split.reversed {
+  grid-template-columns: 0.9fr 1fr;
+}
+
+.split .section-heading {
+  margin-bottom: 1rem;
+}
+
+.split p + p {
+  margin-top: 1rem;
+}
+
+.bullets {
+  list-style: none;
+  margin-top: 1.5rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.bullets li {
+  display: flex;
+  gap: 0.7rem;
+  align-items: baseline;
+  color: var(--text);
+}
+
+.bullets li::before {
+  content: "";
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  background: var(--green);
+  transform: translateY(-0.08rem);
+}
+
+/* ---------------------------------------------------------------------------
+   Feature grid (section 5 — the one card grid)
+   --------------------------------------------------------------------------- */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  margin-top: 2.5rem;
+}
+
+.feature {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.5rem 1.4rem;
+}
+
+.feature .icon {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: var(--radius);
+  background: var(--mint);
+  color: var(--green);
+  display: grid;
+  place-items: center;
+  margin-bottom: 1rem;
+}
+
+.feature .icon svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.feature h3 {
+  font-size: 1.12rem;
+  font-weight: 700;
+  margin-bottom: 0.45rem;
+}
+
+.feature p {
+  font-size: 0.97rem;
+  color: var(--text-soft);
+}
+
+.note-line {
+  margin-top: 1.5rem;
+  font-size: 0.95rem;
+  color: var(--text-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Trust section (dark band)
+   --------------------------------------------------------------------------- */
+
+.trust {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  margin-top: 2.5rem;
+}
+
+.trust-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--band-line);
+  border-radius: var(--radius);
+  padding: 1.5rem 1.4rem;
+}
+
+.trust-card h3 {
+  color: var(--band-text);
+  font-size: 1.12rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.trust-card p {
+  color: var(--band-soft);
+  font-size: 0.97rem;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  margin-top: 2rem;
+}
+
+.stat {
+  border-top: 2px solid var(--green);
+  padding-top: 0.9rem;
+}
+
+.stat .num {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: clamp(1.6rem, 3.4vw, 2.2rem);
+  color: #8cd9b6;
+  display: block;
+  line-height: 1.05;
+}
+
+.stat .lbl {
+  color: var(--band-soft);
+  font-size: 0.95rem;
+  margin-top: 0.25rem;
+  display: block;
+}
+
+/* Bright example card on the dark band */
+
+.example-card {
+  margin-top: 2.2rem;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-width: 46rem;
+  padding: 1.4rem 1.6rem;
+}
+
+.example-card .card-head {
+  color: var(--ink);
+}
+
+.example-card p {
+  color: var(--ink);
+  margin-bottom: 0.4rem;
+}
+
+.example-card .sub {
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+
+.example-card .checks {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+}
+
+.example-card .checks span::before {
+  content: "✓ ";
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------------
+   Steps
+   --------------------------------------------------------------------------- */
+
+.steps {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  margin-top: 2.5rem;
+  counter-reset: step;
+}
+
+.steps li {
+  border-top: 2px solid var(--line);
+  padding-top: 1.1rem;
+}
+
+.steps li::before {
+  counter-increment: step;
+  content: "0" counter(step);
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1.35rem;
+  color: var(--green);
+  display: block;
+  margin-bottom: 0.6rem;
+}
+
+.steps h3 {
+  font-size: 1.14rem;
+  font-weight: 700;
+  margin-bottom: 0.45rem;
+}
+
+.steps p {
+  color: var(--text-soft);
+  font-size: 0.97rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Pricing
+   --------------------------------------------------------------------------- */
+
+.pricing-card {
+  max-width: 32rem;
+  margin-inline: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-align: center;
+  padding: clamp(2rem, 5vw, 3rem) clamp(1.5rem, 4vw, 3rem);
+}
+
+.pricing-card .price {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: clamp(1.9rem, 4.5vw, 2.6rem);
+  color: var(--text);
+}
+
+.pricing-card .desc {
+  color: var(--text-soft);
+  margin: 0.9rem auto 1.6rem;
+  max-width: 26rem;
+}
+
+.pricing-card .btn {
+  width: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+   Built-on chips
+   --------------------------------------------------------------------------- */
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.6rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.chip .state {
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  border-left: 1px solid var(--line);
+  padding-left: 0.5rem;
+}
+
+.chip::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.chip.dev::before {
+  background: var(--green-bright);
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Final CTA band
+   --------------------------------------------------------------------------- */
+
+.cta .split {
+  grid-template-columns: 0.85fr 1.15fr;
+}
+
+.cta .section-heading {
+  max-width: none;
+}
+
+.cta p {
+  color: var(--band-soft);
+  max-width: 34rem;
+}
+
+.cta .btn {
+  margin-top: 1.6rem;
+}
+
+.cta .photo {
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------------------------------------------------------------------------
+   Footer
+   --------------------------------------------------------------------------- */
+
+.site-footer {
+  background: var(--band-bg);
+  color: var(--band-text);
+  border-top: 1px solid var(--band-line);
+  padding-block: 3.5rem 2rem;
+}
+
+.footer-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr;
+  gap: 2rem;
+}
+
+.site-footer .wordmark {
+  color: var(--band-text);
+}
+
+.footer-desc {
+  color: var(--band-soft);
+  margin-top: 0.7rem;
+  max-width: 20rem;
+  font-size: 0.95rem;
+}
+
+.footer-col h3 {
+  color: var(--band-text);
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.8rem;
+}
+
+.footer-col ul {
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.footer-col a {
+  color: var(--band-soft);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.footer-col a:hover {
+  color: #9bdfbe;
+  text-decoration: underline;
+}
+
+.footer-legal {
+  border-top: 1px solid var(--band-line);
+  margin-top: 2.5rem;
+  padding-top: 1.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--band-soft);
+  font-size: 0.9rem;
+}
+
+.footer-legal a {
+  color: var(--band-soft);
+  margin-left: 1.25rem;
+  text-decoration: none;
+}
+
+.footer-legal a:hover {
+  color: #9bdfbe;
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------------
+   Legal pages (privacy / terms)
+   --------------------------------------------------------------------------- */
+
+.legal-header {
+  border-bottom: 1px solid var(--line);
+  padding-block: 0.8rem;
+  background: var(--paper);
+}
+
+.draft-banner {
+  background: #fdeecb;
+  color: #5a3d00;
+  border-bottom: 1px solid #e6c98a;
+  text-align: center;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .draft-banner {
+    background: #4a3810;
+    color: #ffdf9e;
+    border-bottom-color: #6a5220;
+  }
+}
+
+.legal-body {
+  max-width: 44rem;
+  margin-inline: auto;
+  padding-block: clamp(2rem, 6vw, 4rem);
+  padding-inline: clamp(1rem, 4vw, 2rem);
+}
+
+.legal-body h1 {
+  font-size: clamp(1.8rem, 4vw, 2.4rem);
+  margin-bottom: 1.8rem;
+}
+
+.legal-body h2 {
+  font-family: var(--font-heading);
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 2rem 0 0.5rem;
+}
+
+.legal-body p,
+.legal-body li {
+  color: var(--text-soft);
+  font-size: 0.98rem;
+}
+
+.legal-body ul {
+  margin: 0.5rem 0 0 1.2rem;
+}
+
+.legal-body .placeholder {
+  background: var(--mint);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  color: var(--ink);
+}
+
+.placeholder-text {
+  color: var(--band-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 980px) {
+  .hero-grid,
+  .split,
+  .split.reversed {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-grid,
+  .trust,
+  .stat-row,
+  .steps {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .steps li {
+    border-top-color: var(--line);
+  }
+
+  .cta .split {
+    grid-template-columns: 1fr;
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .feature-grid,
+  .trust,
+  .stat-row,
+  .steps {
+    grid-template-columns: 1fr;
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .float-card {
+    width: 100%;
+  }
+}

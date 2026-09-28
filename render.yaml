@@ -42,6 +42,19 @@ services:
         value: INFO
       - key: ENVIRONMENT
         value: production
+  - type: web
+    name: confam-landing
+    runtime: static
+    plan: free
+    buildCommand: ""
+    staticPublishPath: ./landing
+    routes:
+      - type: rewrite
+        source: /privacy
+        destination: /privacy.html
+      - type: rewrite
+        source: /terms
+        destination: /terms.html
 
 databases:
   - name: confam-db
