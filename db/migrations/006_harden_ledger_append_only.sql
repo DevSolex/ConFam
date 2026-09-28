@@ -120,16 +120,19 @@ COMMENT ON TRIGGER ledger_entries_append_only_trigger ON ledger_entries IS
 --   migration 007. Migration 007 must run before this step takes effect.
 -- -----------------------------------------------------------------------------
 
--- Revoke mutating privileges from the application role.
--- The app role retains SELECT and INSERT only on this table.
-REVOKE UPDATE, DELETE ON ledger_entries FROM confam_app;
-
--- Explicitly confirm the privileges the application role SHOULD retain.
--- This is documentation as much as enforcement — it states the intended grant
--- so a future audit can verify nothing has drifted.
--- (GRANT is a no-op if the role already has these; it will error if the role
---  does not exist — which is the intended behaviour: fail loudly, not silently.)
-GRANT SELECT, INSERT ON ledger_entries TO confam_app;
+-- Revoke/grant only if confam_app role exists (skipped on Render single-role deployments).
+-- The trigger above is the universal defence regardless of role.
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'confam_app') THEN
+        REVOKE UPDATE, DELETE ON ledger_entries FROM confam_app;
+        GRANT SELECT, INSERT ON ledger_entries TO confam_app;
+        RAISE NOTICE 'confam_app privileges set on ledger_entries';
+    ELSE
+        RAISE NOTICE 'confam_app role not found — skipping REVOKE/GRANT (Render single-role deployment). Trigger is the sole defence.';
+    END IF;
+END
+$$;
 
 
 -- -----------------------------------------------------------------------------
