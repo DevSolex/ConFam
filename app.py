@@ -207,9 +207,16 @@ def trigger_reconciliation() -> dict:
 # ---------------------------------------------------------------------------
 
 from fastapi import APIRouter as _APIRouter
+from fastapi import Request as _Request
 from fastapi.responses import HTMLResponse
 
-from services.checkout.main import _load_and_open, CheckoutDetail, _render_checkout_page, _render_invalid_page
+from services.checkout.main import (
+    CheckoutDetail,
+    _load_and_open,
+    _load_for_page,
+    _render_checkout_page,
+    _render_invalid_page,
+)
 from fastapi import HTTPException as _HTTPException
 
 checkout_router = _APIRouter(prefix="/pay")
@@ -221,27 +228,30 @@ def get_checkout_json(link_id: str) -> CheckoutDetail:
 
 
 @checkout_router.get("/{link_id}", response_class=HTMLResponse)
-def get_checkout_page(link_id: str) -> HTMLResponse:
+def get_checkout_page(link_id: str, request: _Request) -> HTMLResponse:
+    # Mirrors services.checkout.main.get_checkout_page. The handlers are
+    # duplicated rather than imported because FastAPI needs a route object bound
+    # to THIS router; the logic they call is shared, so the two cannot drift.
     try:
-        detail = _load_and_open(link_id)
+        detail, payable = _load_for_page(link_id)
     except _HTTPException as exc:
         return HTMLResponse(content=_render_invalid_page(exc.detail), status_code=exc.status_code)
-    return HTMLResponse(content=_render_checkout_page(detail), status_code=200)
-
-
-# Pay by bank — imported from checkout pay module
-from services.checkout.pay import router as _pay_router
-
-# Re-mount the pay router under /pay prefix
-for route in _pay_router.routes:
-    # Prepend /pay to the existing /{link_id}/pay/bank path
-    checkout_router.add_api_route(
-        route.path,
-        route.endpoint,
-        methods=list(route.methods),
-        response_model=getattr(route, 'response_model', None),
-        status_code=getattr(route, 'status_code', 200),
+    return HTMLResponse(
+        content=_render_checkout_page(detail, request, payable=payable), status_code=200
     )
+
+
+# Re-mount the pay and status routers under /pay.
+#
+# Do this by including the routers, not by copying route.path onto
+# checkout_router: the copy-by-path loop that used to live here silently dropped
+# each route's dependencies, tags and name, and would have dropped the new
+# status route too.
+from services.checkout.pay import router as _pay_router
+from services.checkout.link_state import router as _status_router
+
+checkout_router.include_router(_pay_router)
+checkout_router.include_router(_status_router)
 
 app.include_router(checkout_router)
 

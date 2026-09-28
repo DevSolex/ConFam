@@ -44,6 +44,24 @@ log = structlog.get_logger()
 
 PAYSTACK_API_BASE = os.environ.get("PAYSTACK_BASE_URL", "https://api.paystack.co")
 
+# Paystack's own channel names, accepted in the `channels` array of Initialize
+# Transaction / Create Charge. Source: Paystack Transaction API reference.
+#
+# We offer a subset to buyers (see services/checkout/pay.py METHOD_CHANNELS).
+# The rest are listed here so a typo is caught before the API call rather than
+# silently ignored by Paystack, which falls back to showing every enabled
+# channel. "bank" is Pay-with-Bank, which is also where OPay appears as an
+# option — OPay is not a separate channel.
+PAYSTACK_CHANNELS = frozenset({
+    "card",
+    "bank",
+    "bank_transfer",
+    "ussd",
+    "qr",
+    "eft",
+    "mobile_money",
+})
+
 
 class PaystackError(Exception):
     """Raised when the Paystack API returns an error or is unreachable."""
@@ -137,6 +155,8 @@ def initialize_transaction(
     reference: str,
     link_id: str,
     transaction_charge_minor_units: int = 0,
+    channels: list[str] | None = None,
+    callback_url: str | None = None,
 ) -> InitializedTransaction:
     """
     Call Paystack's Initialize Transaction API and return the authorization URL.
@@ -152,6 +172,14 @@ def initialize_transaction(
         transaction_charge_minor_units: ConFam's platform fee in kobo (flat fee
             that stays in ConFam's Paystack balance). The remainder goes to the
             merchant's subaccount. 0 means full amount goes to the subaccount.
+        channels: restricts what the buyer may pay with, e.g. ["card"] or
+            ["bank_transfer"]. Omit to let Paystack show everything the account
+            has enabled. Valid values are Paystack's own channel names — see
+            PAYSTACK_CHANNELS below. Note these are *channel* names, not our
+            buyer-facing method names; services/checkout/pay.py owns that map.
+        callback_url: fully qualified URL Paystack redirects the buyer to after
+            payment. Omit to use the URL configured on the Paystack dashboard.
+            We always set it so the buyer lands back on this link's page.
 
     Raises PaystackError on API failure or unreachability.
 
@@ -159,12 +187,33 @@ def initialize_transaction(
     is collected. The merchant's bank account is credited later, per their
     settlement_schedule (default AUTO = next business day). The LedgerEntry
     written on charge.success records payment confirmation, not bank credit.
+
+    NOTE on the subaccount split: `subaccount` and `channels` are independent
+    parameters and Paystack applies the split when the charge settles, so the
+    merchant's share is routed without ConFam ever holding the money. This holds
+    for every channel we offer, but Paystack's docs never state it explicitly
+    per channel — see the verification notes in docs/PAYSTACK_VERIFICATION.md
+    for what is confirmed, what is inferred, and what still needs checking in
+    test mode by reading the split on a real transaction.
     """
     if not isinstance(amount_minor_units, int) or isinstance(amount_minor_units, bool):
         raise TypeError(
             f"amount_minor_units must be int (kobo), got {type(amount_minor_units).__name__}. "
             "Engineering Rule 6."
         )
+
+    if channels is not None:
+        if not channels:
+            raise ValueError("channels must contain at least one channel or be omitted")
+        unknown = [c for c in channels if c not in PAYSTACK_CHANNELS]
+        if unknown:
+            # Fail before the API call: Paystack silently ignores unrecognised
+            # channel names and falls back to showing everything, which would
+            # quietly widen what the buyer can pay with.
+            raise ValueError(
+                f"Unknown Paystack channel(s): {unknown}. "
+                f"Valid channels: {', '.join(sorted(PAYSTACK_CHANNELS))}."
+            )
 
     payload: dict = {
         "amount": amount_minor_units,
@@ -176,6 +225,10 @@ def initialize_transaction(
             "cancel_action": "payment_cancelled",
         },
     }
+    if channels is not None:
+        payload["channels"] = list(channels)
+    if callback_url:
+        payload["callback_url"] = callback_url
     if transaction_charge_minor_units > 0:
         payload["transaction_charge"] = transaction_charge_minor_units
 

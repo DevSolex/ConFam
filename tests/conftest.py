@@ -22,6 +22,29 @@ def reset_db_pool_on_database_url_change(monkeypatch):
     _confam_db.close_pool()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def relax_checkout_rate_limits_for_test_session():
+    """
+    The checkout app's in-process rate limiter (services/checkout/middleware.py)
+    counts the whole test suite as one IP, because every httpx ASGI client
+    reports the same client_address. The integration suite posts to /pay far
+    more than the 10/min per-IP production limit, so the shared middleware
+    window would 429 later tests spuriously (order-dependent failures).
+
+    The middleware reads PAY_RPM / CHECKOUT_RPM at dispatch time, so mutating
+    the module attributes is what actually takes effect. Nothing in the suite
+    asserts a checkout 429; rate limiting itself is verified only for messaging,
+    which uses a different limiter — so relaxing these session-wide is safe.
+    """
+    import sys
+
+    import services.checkout.middleware as _checkout_middleware
+
+    _checkout_middleware.PAY_RPM = sys.maxsize
+    _checkout_middleware.CHECKOUT_RPM = sys.maxsize
+    yield
+
+
 @pytest.fixture(scope="session")
 def app_db_conn():
     """

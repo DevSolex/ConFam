@@ -11,8 +11,14 @@ that works across multiple instances. The in-process approach is correct
 for a single-instance pilot.
 
 Limits (conservative, adjustable via env vars):
-  RATE_LIMIT_PAY_RPM     — POST /{link_id}/pay/bank  (default: 10/min per IP)
-  RATE_LIMIT_CHECKOUT_RPM — GET /{link_id}            (default: 60/min per IP)
+  RATE_LIMIT_PAY_RPM      — POST /{link_id}/pay[/bank]  (default: 10/min per IP)
+  RATE_LIMIT_CHECKOUT_RPM — GET /{link_id}, GET /{link_id}/status
+                                                  (default: 60/min per IP)
+
+The checkout GET limit has to cover polling: after paying, a buyer sits on the
+page hitting /{link_id}/status every 3 seconds, so ~20 requests per minute per
+buyer, all from the same IP behind Render's proxy. If buyers start seeing 429s
+mid-payment, raise CHECKOUT_RPM before doing anything else.
 """
 
 import os
@@ -54,8 +60,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
 
-        # Determine limit for this path
-        if "/pay/bank" in path and request.method == "POST":
+        # Determine limit for this path.
+        #
+        # The pay path check is a suffix match, not the old "/pay/bank" substring
+        # test, so it covers both the canonical POST /{link_id}/pay and the
+        # legacy POST /{link_id}/pay/bank without also catching a link_id that
+        # happens to contain those characters. It is last for a reason: the GET
+        # branch below would otherwise swallow the poll endpoint, which is hit
+        # every 3 seconds by every buyer who just paid.
+        if request.method == "POST" and (path.endswith("/pay") or path.endswith("/pay/bank")):
             limit = PAY_RPM
             path_key = "pay"
         elif request.method == "GET" and path != "/health":

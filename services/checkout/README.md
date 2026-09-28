@@ -7,8 +7,8 @@ See [`docs/ARCHITECTURE.md` §3.2](../../docs/ARCHITECTURE.md) for the authorita
 ## What belongs here
 
 - Rendering the transaction details (item/amount, merchant name) so the buyer knows what they're paying for.
-- Presenting exactly two payment options: bank transfer or Lobstr/Stellar.
-- Real-time payment status polling or subscription (SSE/websocket) — this page is the buyer's only feedback loop, so confirmation must appear as soon as the rail confirms.
+- Presenting the payment options via Paystack's hosted page: card, bank transfer, bank (incl. OPay), or USSD. Card details never touch ConFam (PCI-DSS SAQ-A).
+- Real-time payment status polling — this page is the buyer's only feedback loop, so confirmation must appear as soon as the rail confirms.
 - Link expiry handling — displaying an appropriate message if the link has expired or already been paid.
 
 ## What does NOT belong here
@@ -21,13 +21,13 @@ See [`docs/ARCHITECTURE.md` §3.2](../../docs/ARCHITECTURE.md) for the authorita
 ## Stack
 
 - **Language/framework:** Python / FastAPI (OQ-002 resolved)
-- **Real-time status:** Server-Sent Events (SSE) via FastAPI `StreamingResponse` (OQ-006 resolved)
+- **Real-time status:** buyer-side polling of `GET /{link_id}/status` every 3s, capped at 5 minutes (OQ-006 resolved — polling replaces SSE)
 - **Hosting:** `pay.confam.co/<link_id>` — generic domain, no per-merchant subdomain for the pilot (OQ-011 resolved)
 - **Expiry:** 30 minutes from creation or first successful payment, whichever comes first (OQ-012 resolved)
 
 ## Status
 
-**Scaffolded — not yet implemented.**
+**Implemented.** Buyer-facing Paystack checkout page with webhook-driven confirmation polling.
 
 ## Resolved decisions affecting this component
 
