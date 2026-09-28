@@ -25,10 +25,10 @@ COPY . .
 # Increased timeout and retries for environments with slow network.
 RUN pip install --no-cache-dir --timeout=120 --retries=5 -e ".[dev]"
 
-# Ensure the bootstrap script is executable.
-RUN chmod +x /app/db/bootstrap_roles.sh
+# Ensure the bootstrap scripts are executable.
+RUN chmod +x /app/db/bootstrap_roles.sh /app/db/render_bootstrap.sh /app/docker-entrypoint.sh
 
-# Default entrypoint: settlement-engine.
+# Default entrypoint: settlement-engine for local docker-compose.
 # Overridden per-service in docker-compose.yml.
-CMD ["uvicorn", "services.settlement_engine.main:app", \
-     "--host", "0.0.0.0", "--port", "8000"]
+# On Render: docker-entrypoint.sh runs bootstrap then uvicorn app:app.
+CMD ["/app/docker-entrypoint.sh"]
