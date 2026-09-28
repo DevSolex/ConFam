@@ -33,6 +33,8 @@ import hashlib
 import hmac
 import json
 import os
+import time
+from collections import deque
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -147,6 +149,133 @@ USAGE_MESSAGE = (
     "Example:\n"
     "  PAY 750 Ankara fabric x2"
 )
+
+# Merchant statuses that can act on commands. Anything else (suspended, or any
+# status added later) gets the support message — fail closed, not open.
+ACTIONABLE_STATUSES = ("active", "pending_verification")
+
+REGISTRATION_INSTRUCTIONS = (
+    "You're not registered with ConFam yet.\n\n"
+    "To get started, send:\n"
+    "  REGISTER <your business name>\n\n"
+    "Example:\n"
+    "  REGISTER Adaeze Fashion Store"
+)
+
+FINISH_SETUP_MESSAGE = (
+    "Finish setup first: send ONBOARD <account number> <bank code>\n\n"
+    "Example: ONBOARD 0123456789 058"
+)
+
+ALREADY_ONBOARDED_MESSAGE = (
+    "Your payout account is already set. "
+    "Changing it is a separate process.\n\n"
+    "Send: UPDATE <account number> <bank code> to change it, "
+    "or PAY <amount> <description> to create a payment link."
+)
+
+SUPPORT_MESSAGE = "Your ConFam account is not active. Please contact support."
+
+RATE_LIMIT_MESSAGE = (
+    "You've made several account verification attempts recently.\n\n"
+    "Please wait a while before trying again — we check each account with our "
+    "banking partner and there's a limit on how often we can do that."
+)
+
+VERIFY_FAILED_MESSAGE = (
+    "We couldn't verify that account just now.\n\n"
+    "Please try again later. If it keeps happening, contact ConFam support."
+)
+
+ACCOUNT_NOT_FOUND_MESSAGE = (
+    "We couldn't verify that account.\n\n"
+    "Please check the 10-digit account number and bank code and try again."
+)
+
+PENDING_HELP_MESSAGE = (
+    "You're registered — one step left.\n\n"
+    "Send: ONBOARD <account number> <bank code>\n"
+    "Example: ONBOARD 0123456789 058\n\n"
+    "That's all we need before you can start taking payments."
+)
+
+
+def _already_registered_message(status: str) -> str:
+    """Reply when a sender who is already a merchant sends REGISTER again."""
+    if status == "pending_verification":
+        return f"You're already registered. Next step is ONBOARD.\n\n{FINISH_SETUP_MESSAGE}"
+    return "You're already registered.\n\nSend: PAY <amount> <description>"
+
+
+def _command_word(text: str) -> str:
+    """The first word of a message, uppercased, for command dispatch.
+
+    Commands are case-insensitive and tolerate arbitrary leading/trailing
+    whitespace, so '  onboard  0123 058' and 'ONBOARD 0123 058' route alike.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    return stripped.split()[0].upper()
+
+
+# ---------------------------------------------------------------------------
+# Per-sender rate limiting on bank account verification
+# ---------------------------------------------------------------------------
+
+# ONBOARD and UPDATE both call Paystack bank/resolve, which is metered and
+# rate-limits aggressively. A merchant (or anyone replaying a captured webhook)
+# could otherwise burn our quota with a handful of messages and leave every
+# other merchant unable to onboard. Limits the verification attempts, not all
+# traffic — a merchant can still send unlimited PAY commands.
+#
+# Same in-process sliding window as services/checkout/middleware.py: correct
+# for the single-instance pilot, to be replaced with Redis or a WAF rule when
+# the service runs on more than one instance (see OPEN_QUESTIONS.md OQ-025
+# rate-limiting follow-up).
+
+_RATE_LIMIT_WINDOW_SECONDS = 3600
+
+
+def _resolve_rate_limit() -> int:
+    try:
+        return int(os.environ.get("RATE_LIMIT_ONBOARD_PER_HOUR", "5"))
+    except (ValueError, TypeError):
+        return 5
+
+
+# {sender_id: deque of monotonic timestamps of recent verification attempts}
+_RESOLVE_ATTEMPTS: dict[str, deque] = {}
+
+
+def check_resolve_rate_limit(sender_id: str) -> bool:
+    """
+    Record a bank account verification attempt. Returns True if over the limit.
+
+    The attempt is recorded even when it is rejected, so a sender that keeps
+    hammering stays throttled instead of getting a fresh budget each time.
+    """
+    limit = _resolve_rate_limit()
+    if limit <= 0:
+        return False  # disabled
+
+    now = time.monotonic()
+    window = _RESOLVE_ATTEMPTS.setdefault(sender_id, deque())
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    while window and window[0] < cutoff:
+        window.popleft()
+
+    if len(window) >= limit:
+        log.warning(
+            "onboard_rate_limit_exceeded",
+            from_id=sender_id,
+            limit=limit,
+            window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
+        )
+        return True
+
+    window.append(now)
+    return False
 
 
 def parse_pay_command(text: str) -> tuple[int, str]:
@@ -317,9 +446,14 @@ async def whatsapp_webhook(request: Request) -> Response:
       1. Verify signature.
       2. Extract sender ID and message text.
       3. Resolve sender → merchant.
-      4. Parse PAY command.
-      5. Create payment link.
-      6. Reply with checkout URL.
+      4. Route on (merchant status, command).
+      5. Reply.
+
+    Routing is per command, NOT gated on the merchant being active. A blanket
+    `status != 'active'` check ahead of dispatch made ONBOARD unreachable for
+    exactly the merchants who needed it — the command is what makes a merchant
+    active, so gating it on already being active is a deadlock. See
+    _route_command for the state x command matrix.
     """
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
@@ -366,83 +500,143 @@ async def whatsapp_webhook(request: Request) -> Response:
     checkout_base = os.environ.get("CHECKOUT_BASE_URL", "http://localhost:8001")
 
     with get_conn() as conn:
-        # Handle REGISTER before merchant resolution — unregistered senders can register
-        cmd_word = message_text.strip().split()[0].upper() if message_text.strip() else ""
-        if cmd_word == "REGISTER":
+        return _route_command(conn, from_id, message_text, checkout_base)
+
+
+def _route_command(conn, from_id: str, message_text: str, checkout_base: str) -> Response:
+    """
+    Resolve the sender and dispatch on (merchant status, command).
+
+    The state x command matrix:
+
+      unregistered : REGISTER -> create merchant (pending_verification)
+                     anything else -> registration instructions
+      pending      : ONBOARD -> run onboarding
+                     PAY     -> tell them to finish setup
+                     REGISTER-> already registered, next step is ONBOARD
+                     UPDATE  -> no account yet, point at ONBOARD
+                     CANCEL  -> nothing to cancel
+                     else    -> short help
+      active       : PAY     -> create payment link
+                     ONBOARD -> already set, changing is a separate process
+                     UPDATE  -> start a change (cooling-off)
+                     CANCEL  -> cancel a pending change
+                     REGISTER-> already registered
+                     else    -> usage
+      other        : everything -> contact support (fails closed)
+
+    Split out from the webhook endpoint so the matrix is testable on its own.
+    """
+    cmd = _command_word(message_text)
+
+    # Unregistered senders may only REGISTER.
+    try:
+        merchant = resolve_merchant(conn, from_id)
+    except UnregisteredSender:
+        if cmd == "REGISTER":
             try:
                 business_name = parse_register_command(message_text)
             except ParseError as exc:
                 _send_whatsapp(from_id, str(exc))
                 return Response(status_code=200)
             return _handle_register_command(conn, from_id, business_name)
+        _send_whatsapp(from_id, REGISTRATION_INSTRUCTIONS)
+        log.warning("whatsapp_unregistered_sender", from_id=from_id)
+        return Response(status_code=200)
 
-        # Resolve sender to merchant
+    merchant_id = merchant["merchant_id"]
+    status = merchant["status"]
+
+    # Suspended, or any status we don't recognise: nothing is actionable,
+    # including REGISTER. Fails closed rather than open.
+    if status not in ACTIONABLE_STATUSES:
+        log.warning("whatsapp_command_blocked_status", from_id=from_id, status=status, command=cmd)
+        _send_whatsapp(from_id, SUPPORT_MESSAGE)
+        return Response(status_code=200)
+
+    if cmd == "REGISTER":
+        _send_whatsapp(from_id, _already_registered_message(status))
+        return Response(status_code=200)
+
+    if status == "pending_verification":
+        return _route_pending(conn, from_id, merchant_id, message_text, cmd)
+
+    return _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base)
+
+
+def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
+    """Commands available to a merchant who has registered but not onboarded."""
+    if cmd == "ONBOARD":
         try:
-            merchant = resolve_merchant(conn, from_id)
-        except UnregisteredSender:
-            _send_whatsapp(
-                from_id,
-                "You're not registered with ConFam yet.\n\n"
-                "To get started, send:\n"
-                "  REGISTER <your business name>\n\n"
-                "Example:\n"
-                "  REGISTER Adaeze Fashion Store",
-            )
-            log.warning("whatsapp_unregistered_sender", from_id=from_id)
-            return Response(status_code=200)
-
-        merchant_id = merchant["merchant_id"]
-
-        if merchant["status"] != "active":
-            _send_whatsapp(
-                from_id,
-                "Your ConFam account is not yet active. "
-                "Please complete account setup first.",
-            )
-            return Response(status_code=200)
-
-        # Route commands
-        cmd = message_text.strip().split()[0].upper() if message_text.strip() else ""
-
-        if cmd in ("CANCEL", "STOP"):
-            return _handle_cancel_command(conn, from_id, merchant_id)
-
-        if cmd == "ONBOARD":
-            try:
-                account_number, bank_code = parse_account_command(message_text, "ONBOARD")
-            except ParseError as exc:
-                _send_whatsapp(from_id, str(exc))
-                return Response(status_code=200)
-            return _handle_onboard_command(conn, from_id, merchant_id, account_number, bank_code)
-
-        if cmd == "UPDATE":
-            try:
-                account_number, bank_code = parse_account_command(message_text, "UPDATE")
-            except ParseError as exc:
-                _send_whatsapp(from_id, str(exc))
-                return Response(status_code=200)
-            return _handle_update_command(conn, from_id, merchant_id, account_number, bank_code)
-
-        # Parse PAY command
-        try:
-            amount_minor_units, description = parse_pay_command(message_text)
+            account_number, bank_code = parse_account_command(message_text, "ONBOARD")
         except ParseError as exc:
             _send_whatsapp(from_id, str(exc))
             return Response(status_code=200)
+        return _handle_onboard_command(conn, from_id, merchant_id, account_number, bank_code)
 
-        # Create payment link (in-process — no second HTTP hop)
+    if cmd == "PAY":
+        _send_whatsapp(from_id, FINISH_SETUP_MESSAGE)
+        return Response(status_code=200)
+
+    if cmd == "UPDATE":
+        # No account to change yet — don't spend a Paystack resolve to discover that.
+        _send_whatsapp(
+            from_id,
+            "You don't have a payout account set up yet.\n\n" + FINISH_SETUP_MESSAGE,
+        )
+        return Response(status_code=200)
+
+    if cmd in ("CANCEL", "STOP"):
+        _send_whatsapp(
+            from_id,
+            "You don't have a pending payout account change to cancel. "
+            "If you haven't finished setup, send ONBOARD <account number> <bank code>.",
+        )
+        return Response(status_code=200)
+
+    _send_whatsapp(from_id, PENDING_HELP_MESSAGE)
+    return Response(status_code=200)
+
+
+def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) -> Response:
+    """Commands available to a fully onboarded merchant."""
+    if cmd == "ONBOARD":
+        # Must not create or overwrite a second payout account. The API returns
+        # 409 for the same case; changing accounts goes through UPDATE.
+        _send_whatsapp(from_id, ALREADY_ONBOARDED_MESSAGE)
+        return Response(status_code=200)
+
+    if cmd in ("CANCEL", "STOP"):
+        return _handle_cancel_command(conn, from_id, merchant_id)
+
+    if cmd == "UPDATE":
         try:
-            link = create_link(
-                conn=conn,
-                merchant_id=merchant_id,
-                amount_minor_units=amount_minor_units,
-                currency="NGN",
-                description=description,
-            )
-        except LinkValidationError as exc:
-            _send_whatsapp(from_id, f"Could not create link: {exc}")
-            log.error("messaging_link_creation_failed", merchant_id=merchant_id, error=str(exc))
+            account_number, bank_code = parse_account_command(message_text, "UPDATE")
+        except ParseError as exc:
+            _send_whatsapp(from_id, str(exc))
             return Response(status_code=200)
+        return _handle_update_command(conn, from_id, merchant_id, account_number, bank_code)
+
+    # Parse PAY command
+    try:
+        amount_minor_units, description = parse_pay_command(message_text)
+    except ParseError as exc:
+        _send_whatsapp(from_id, str(exc))
+        return Response(status_code=200)
+
+    # Create payment link (in-process — no second HTTP hop)
+    try:
+        link = create_link(
+            conn=conn,
+            merchant_id=merchant_id,
+            amount_minor_units=amount_minor_units,
+            currency="NGN",
+            description=description,
+        )
+    except LinkValidationError as exc:
+        _send_whatsapp(from_id, f"Could not create link: {exc}")
+        log.error("messaging_link_creation_failed", merchant_id=merchant_id, error=str(exc))
+        return Response(status_code=200)
 
     checkout_url = f"{checkout_base.rstrip('/')}/{link.link_id}"
     reply = (
@@ -481,10 +675,6 @@ def _handle_register_command(conn, from_id: str, business_name: str) -> Response
     set to the sender's WhatsApp ID (bare digits). The merchant can then
     use ONBOARD to add their bank account.
     """
-    import psycopg2.errors as pg_errors
-
-    # Check if already registered
-    existing = resolve_merchant.__wrapped__(conn, from_id) if hasattr(resolve_merchant, '__wrapped__') else None
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -505,13 +695,9 @@ def _handle_register_command(conn, from_id: str, business_name: str) -> Response
         log.info("merchant_registered_via_whatsapp", from_id=from_id, merchant_id=merchant_id)
     except Exception as exc:
         if "unique" in str(exc).lower():
+            # Lost a race with a concurrent REGISTER from the same sender.
             conn.rollback()
-            _send_whatsapp(
-                from_id,
-                "You already have a ConFam account.\n"
-                "Send ONBOARD <account number> <bank code> to set up your payout account,\n"
-                "or PAY <amount> <description> to create a payment link.",
-            )
+            _send_whatsapp(from_id, "You're already registered.\n\n" + FINISH_SETUP_MESSAGE)
         else:
             conn.rollback()
             log.error("register_command_failed", from_id=from_id, error=str(exc))
@@ -524,20 +710,45 @@ def _handle_onboard_command(conn, from_id: str, merchant_id: str, account_number
     ONBOARD <account_number> <bank_code> — first-time payout account setup.
     Calls Paystack bank/resolve + create_subaccount in-process.
     """
-    from confam.paystack import PaystackError, resolve_bank_account, create_subaccount
-    from confam.payout_accounts import PendingChangeAlreadyExists
+    from confam.paystack import (
+        PaystackError, PaystackRateLimited, resolve_bank_account, create_subaccount,
+    )
+    from confam.payout_accounts import NoActivePayoutAccount, get_active_payout_account
+
+    # A merchant that already onboarded must not get a second account. Routing
+    # normally catches this, but re-check here: the status and this command can
+    # race (two ONBOARDs in flight), and the unique index that used to prevent
+    # a second active account was dropped in migration 010.
+    try:
+        get_active_payout_account(conn, merchant_id)
+    except NoActivePayoutAccount:
+        pass
+    else:
+        _send_whatsapp(from_id, ALREADY_ONBOARDED_MESSAGE)
+        log.info("onboard_rejected_already_active", from_id=from_id, merchant_id=merchant_id)
+        return Response(status_code=200)
+
+    # Each ONBOARD spends Paystack bank/resolve quota — rate limit per sender.
+    if check_resolve_rate_limit(from_id):
+        _send_whatsapp(from_id, RATE_LIMIT_MESSAGE)
+        return Response(status_code=200)
 
     # Verify bank account with Paystack
     try:
         resolved = resolve_bank_account(account_number=account_number, bank_code=bank_code)
+    except PaystackRateLimited:
+        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+        log.warning("onboard_paystack_rate_limited", from_id=from_id, merchant_id=merchant_id)
+        return Response(status_code=200)
     except PaystackError as exc:
-        _send_whatsapp(
-            from_id,
-            f"❌ Could not verify that bank account.\n\n"
-            f"Please check the account number and bank code are correct.\n"
-            f"Error: {str(exc)[:100]}",
+        # 422 — Paystack rejected the account number / bank code combination.
+        _send_whatsapp(from_id, ACCOUNT_NOT_FOUND_MESSAGE)
+        log.warning(
+            "onboard_resolution_failed",
+            from_id=from_id,
+            merchant_id=merchant_id,
+            reason=str(exc),
         )
-        log.warning("onboard_resolution_failed", from_id=from_id, error=str(exc))
         return Response(status_code=200)
 
     # Get merchant's business name for Paystack subaccount
@@ -553,9 +764,15 @@ def _handle_onboard_command(conn, from_id: str, merchant_id: str, account_number
             account_number=account_number,
             percentage_charge=0.0,
         )
+    except PaystackRateLimited:
+        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+        log.warning("onboard_subaccount_rate_limited", from_id=from_id, merchant_id=merchant_id)
+        return Response(status_code=200)
     except PaystackError as exc:
         _send_whatsapp(from_id, "❌ Account setup failed. Please try again or contact support.")
-        log.error("onboard_subaccount_failed", from_id=from_id, error=str(exc))
+        log.error(
+            "onboard_subaccount_failed", from_id=from_id, merchant_id=merchant_id, reason=str(exc)
+        )
         return Response(status_code=200)
 
     # Write PayoutAccount and activate merchant
@@ -602,15 +819,28 @@ def _handle_update_command(conn, from_id: str, merchant_id: str, account_number:
     UPDATE <account_number> <bank_code> — change payout account with cooling-off.
     Sends immediate notification. Merchant can reply CANCEL to abort.
     """
-    from confam.paystack import PaystackError, resolve_bank_account, create_subaccount
+    from confam.paystack import (
+        PaystackError, PaystackRateLimited, resolve_bank_account, create_subaccount,
+    )
     from confam.payout_accounts import (
         NoActivePayoutAccount, PendingChangeAlreadyExists, request_payout_account_change,
     )
 
+    # UPDATE spends the same Paystack bank/resolve quota as ONBOARD — same limit.
+    if check_resolve_rate_limit(from_id):
+        _send_whatsapp(from_id, RATE_LIMIT_MESSAGE)
+        return Response(status_code=200)
+
     try:
         resolved = resolve_bank_account(account_number=account_number, bank_code=bank_code)
+    except PaystackRateLimited:
+        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+        return Response(status_code=200)
     except PaystackError as exc:
-        _send_whatsapp(from_id, f"❌ Could not verify that bank account.\nError: {str(exc)[:100]}")
+        _send_whatsapp(from_id, ACCOUNT_NOT_FOUND_MESSAGE)
+        log.warning(
+            "update_resolution_failed", from_id=from_id, merchant_id=merchant_id, reason=str(exc)
+        )
         return Response(status_code=200)
 
     with conn.cursor() as cur:
@@ -623,8 +853,14 @@ def _handle_update_command(conn, from_id: str, merchant_id: str, account_number:
             business_name=business_name, bank_code=bank_code,
             account_number=account_number, percentage_charge=0.0,
         )
+    except PaystackRateLimited:
+        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+        return Response(status_code=200)
     except PaystackError as exc:
         _send_whatsapp(from_id, "❌ Update failed. Please try again or contact support.")
+        log.error(
+            "update_subaccount_failed", from_id=from_id, merchant_id=merchant_id, reason=str(exc)
+        )
         return Response(status_code=200)
 
     try:

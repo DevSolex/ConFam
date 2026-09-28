@@ -49,6 +49,17 @@ class PaystackError(Exception):
     """Raised when the Paystack API returns an error or is unreachable."""
 
 
+class PaystackRateLimited(PaystackError):
+    """Raised when Paystack responds 429 (API quota exhausted).
+
+    Distinguished from a generic PaystackError so callers can tell "this account
+    is wrong" (merchant must fix their input) apart from "we are being
+    throttled" (merchant should simply retry later, and the error is ours, not
+    theirs). Subclassing PaystackError keeps existing `except PaystackError`
+    handlers working.
+    """
+
+
 class WebhookSignatureInvalid(Exception):
     """
     Raised when the x-paystack-signature header does not match the payload.
@@ -222,6 +233,14 @@ def resolve_bank_account(
     Rule 9: the returned account_name is stored for audit purposes. It is not
     automatically matched against the merchant's claimed business name at this
     verification tier — that is a future KYB-depth feature.
+
+    Raises PaystackRateLimited if Paystack throttles us (429).
+    Raises PaystackError if the account cannot be resolved.
+
+    PRIVACY: the exception messages below deliberately exclude the submitted
+    account number and the raw response body. Paystack echoes the account
+    number back in some error payloads, and these strings reach both structured
+    logs and merchant-facing chat replies, so only the status code is carried.
     """
     try:
         response = httpx.get(
@@ -233,15 +252,13 @@ def resolve_bank_account(
         response.raise_for_status()
         data = response.json()
     except httpx.TimeoutException as exc:
-        raise PaystackError(
-            f"Paystack bank/resolve timed out for account {account_number[:4]}****."
-        ) from exc
+        raise PaystackError("Paystack bank/resolve timed out.") from exc
     except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 429:
+            raise PaystackRateLimited("Paystack bank/resolve rate limited (429).") from exc
         # 422 from Paystack means the account number / bank code combination is invalid.
-        raise PaystackError(
-            f"Paystack bank/resolve failed: {exc.response.status_code} "
-            f"{exc.response.text[:200]}"
-        ) from exc
+        raise PaystackError(f"Paystack bank/resolve failed: HTTP {status}") from exc
 
     if not data.get("status"):
         raise PaystackError(
@@ -273,7 +290,11 @@ def create_subaccount(
     main account (e.g. 1.0 = 1%). The remainder goes to the merchant's
     subaccount. Currently 0 (no platform fee taken at this stage).
 
+    Raises PaystackRateLimited if Paystack throttles us (429).
     Raises PaystackError on API failure.
+
+    PRIVACY: as with bank/resolve, the exception message excludes the account
+    number and the raw response body — see resolve_bank_account.
     """
     try:
         response = httpx.post(
@@ -295,10 +316,10 @@ def create_subaccount(
     except httpx.TimeoutException as exc:
         raise PaystackError("Paystack create subaccount timed out.") from exc
     except httpx.HTTPStatusError as exc:
-        raise PaystackError(
-            f"Paystack create subaccount failed: {exc.response.status_code} "
-            f"{exc.response.text[:200]}"
-        ) from exc
+        status = exc.response.status_code
+        if status == 429:
+            raise PaystackRateLimited("Paystack create subaccount rate limited (429).") from exc
+        raise PaystackError(f"Paystack create subaccount failed: HTTP {status}") from exc
 
     if not data.get("status"):
         raise PaystackError(
