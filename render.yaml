@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: confam
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile
+    startCommand: /bin/sh -c "db/render_bootstrap.sh && uvicorn app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: confam-db
+          property: connectionString
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_WEBHOOK_SECRET
+        sync: false
+      - key: PAYSTACK_BASE_URL
+        value: https://api.paystack.co
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: CHECKOUT_BASE_URL
+        sync: false
+      - key: PAYMENT_LINK_EXPIRY_SECONDS
+        value: "1800"
+      - key: PAYOUT_ACCOUNT_COOLING_OFF_SECONDS
+        value: "172800"
+      - key: RECONCILIATION_LOOKBACK_MINUTES
+        value: "20"
+      - key: PAYMENT_LINK_SIGNING_SECRET
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ENVIRONMENT
+        value: production
+
+databases:
+  - name: confam-db
+    plan: free
+    databaseName: confam
+    user: confam
