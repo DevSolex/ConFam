@@ -1,15 +1,19 @@
-import PhoneMockup from "./PhoneMockup.jsx";
-
 export default function Hero() {
   return (
     <section className="hero contain" id="top">
       <div className="hero-grid">
+        {/* Left: headline + CTA */}
         <div>
-          <h1>Every WhatsApp sale, paid straight to your bank.</h1>
-          <p className="lead">
-            ConFam turns a WhatsApp sale into a one-time payment link. Your buyer
-            pays by card or bank transfer on Paystack, the money lands in your
-            own verified bank account, and nobody ever asks for a screenshot.
+          <span className="hero-eyebrow">Private pilot — Nigeria &amp; Ghana</span>
+          <h1>
+            Sell on WhatsApp.<br />
+            Get paid without <span className="accent">the screenshot.</span>
+          </h1>
+          <p className="hero-sub">
+            ConFam turns a WhatsApp sale into a one-time payment link.
+            Your buyer pays by card or bank transfer. The money lands in
+            your own verified bank account — confirmed in seconds, recorded
+            forever.
           </p>
           <div className="hero-actions">
             <a
@@ -26,48 +30,49 @@ export default function Hero() {
           </div>
         </div>
 
-        <div className="hero-media">
-          <PhoneMockup variant="pay-flow" />
-
-          {/* Example card (a): payment received notification */}
-          <div className="float-card top">
-            <div className="card-head">
-              Payment received <span className="tag-example">Example</span>
+        {/* Right: real stat cards — no SVG mockup */}
+        <div className="hero-stats">
+          {/* Confirmation card */}
+          <div className="stat-card">
+            <div className="stat-card-label">Latest payment</div>
+            <div className="stat-card-value">
+              <span className="currency">₦</span>2,500
             </div>
-            <div className="chat">
-              <div className="bubble buyer">
-                <span className="mono">PAY 2500 Jordan</span>
-              </div>
-              <div className="bubble bot">Payment link created.</div>
-              <div className="bubble bot">
-                <span className="check">✓</span> Payment received — you've
-                been paid ₦2,500.
-              </div>
+            <div className="stat-card-meta">Jordan — 1 pair sneakers</div>
+            <div className="stat-card-badge">Confirmed by Paystack</div>
+          </div>
+
+          {/* Today's sales */}
+          <div className="stat-card wide">
+            <div className="stat-item">
+              <div className="stat-item-num">₦6,800</div>
+              <div className="stat-item-lbl">Collected today</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-item-num">3</div>
+              <div className="stat-item-lbl">Orders — 1 record each</div>
             </div>
           </div>
 
-          {/* Example card (b): today's sales */}
-          <div className="float-card bottom">
-            <div className="card-head">
-              Today's sales <span className="tag-example">Example</span>
-            </div>
-            <div className="ledger-rows">
-              <div className="ledger-row">
-                <span>PAY 2500 Jordan</span>
-                <span className="v">₦2,500</span>
-              </div>
-              <div className="ledger-row">
-                <span>PAY 900 wrapper</span>
-                <span className="v">₦900</span>
-              </div>
-              <div className="ledger-row">
-                <span>PAY 3400 ready-to-wear</span>
-                <span className="v">₦3,400</span>
+          {/* Chat preview */}
+          <div className="chat-demo">
+            <div className="chat-demo-header">
+              <div className="chat-demo-avatar">CF</div>
+              <div>
+                <div className="chat-demo-name">ConFam</div>
+                <div className="chat-demo-status">online</div>
               </div>
             </div>
-            <div className="ledger-foot">
-              <span>3 payments</span>
-              <span>1 record each</span>
+            <div className="chat-demo-body">
+              <div className="msg sent">PAY 2500 Jordan <span className="tick">✓✓</span></div>
+              <div className="msg recv">
+                Payment link created ✅<br />
+                <span style={{fontSize:"0.82rem", color:"#555"}}>pay.confam.co/a1b2c3 · expires 30 min</span>
+              </div>
+              <div className="msg recv">
+                Payment received ✅<br />
+                <span className="amount">₦2,500</span> — settled to your account.
+              </div>
             </div>
           </div>
         </div>

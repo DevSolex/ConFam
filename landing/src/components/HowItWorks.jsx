@@ -1,36 +1,37 @@
 export default function HowItWorks() {
   return (
-    <section className="section" id="how">
+    <section className="section surface-raised" id="how">
       <div className="contain">
-        <h2 className="section-heading">How it works</h2>
-        <p className="lead">
-          Nothing to install and nothing new to learn. You keep selling the way
-          you already sell.
+        <span className="section-label">How it works</span>
+        <h2 className="section-heading">
+          From chat to confirmed sale,<br />in three steps.
+        </h2>
+        <p className="section-sub">
+          Nothing new to learn, nothing to install. You keep selling the way you already sell.
         </p>
 
         <ol className="steps">
           <li>
-            <h3>Type PAY in the chat</h3>
+            <h3>Type PAY in the ConFam chat</h3>
             <p>
-              Text <strong>PAY 2500 Jordan</strong> to the ConFam account. You get
-              back a payment link — one per sale — right away.
+              Send <strong style={{color:"var(--white)"}}>PAY 2500 Jordan</strong> to
+              your ConFam number. You get a one-time payment link back in seconds — one per sale.
             </p>
           </li>
           <li>
-            <h3>Buyer pays their way</h3>
+            <h3>Paste the link to your buyer</h3>
             <p>
-              The buyer opens the link and pays by card or bank transfer on
-              Paystack's page. The amount and the account the seller set are what
-              get paid — nothing else.
+              Drop the link into your normal WhatsApp chat with the buyer.
+              They open it and pay by card or bank transfer on Paystack's page —
+              no app to install.
             </p>
           </li>
           <li>
             <h3>Both of you get confirmation</h3>
             <p>
-              The payment confirms against Paystack's record. You get a WhatsApp
-              "Payment received", the money settles to your verified bank account,
-              and the sale becomes one kobo record in the ledger. No screenshot, no
-              double count.
+              ConFam checks the payment against Paystack's own record — never a
+              screenshot. You get a WhatsApp notification, the money settles to
+              your verified account, and the sale is recorded permanently.
             </p>
           </li>
         </ol>

@@ -11,49 +11,48 @@ const features = [
   {
     Icon: ChatIcon,
     title: "WhatsApp checkout",
-    body: "The whole flow — REGISTER, ONBOARD, PAY — lives in the chat where the sale happened.",
+    body: "REGISTER, ONBOARD, PAY — the whole setup lives in the same chat where you sell.",
   },
   {
     Icon: ShieldCheckIcon,
     title: "Verified bank account",
-    body: "An account is checked against the account holder's name before ConFam will send money to it.",
+    body: "Your account number is checked against the account holder name before ConFam will ever pay it.",
   },
   {
     Icon: LinkIcon,
     title: "One link per sale",
-    body: "Each sale gets its own one-time payment link, so a paid link can't be resold.",
+    body: "Every order gets its own one-time link. A paid link expires immediately and can't be reused.",
   },
   {
     Icon: CardIcon,
-    title: "Card and bank checkout",
-    body: "Buyers pay by card or bank transfer on Paystack's hosted page — no app to install.",
+    title: "Card and bank transfer",
+    body: "Buyers pay on Paystack's hosted page — card or bank transfer, no app for them to install.",
   },
   {
     Icon: LedgerIcon,
     title: "Append-only ledger",
-    body: "Every payment is one whole-number kobo record. Once written, a record can't be edited.",
+    body: "Every payment is one permanent kobo record. Written once, never edited — yours to export.",
   },
   {
     Icon: BellIcon,
-    title: "WhatsApp confirmation",
-    body: "The seller gets a WhatsApp message the moment a payment confirms. Duplicate confirmations count once.",
+    title: "Instant confirmation",
+    body: "You get a WhatsApp message the moment a payment confirms. A duplicate webhook still counts once.",
   },
 ];
 
 export default function WhatYouGet() {
   return (
-    <section className="section" id="what-you-get">
+    <section className="section" id="features">
       <div className="contain">
-        <h2 className="section-heading">What you get</h2>
-        <p className="lead">
-          Everything you need to get paid for a WhatsApp sale, with nothing you
-          have to manage by hand.
-        </p>
+        <span className="section-label">What you get</span>
+        <h2 className="section-heading">
+          Everything you need to get paid.<br />Nothing to manage by hand.
+        </h2>
 
         <div className="feature-grid">
           {features.map(({ Icon, title, body }) => (
             <div className="feature" key={title}>
-              <div className="icon" aria-hidden="true">
+              <div className="feature-icon" aria-hidden="true">
                 <Icon />
               </div>
               <h3>{title}</h3>
@@ -61,11 +60,6 @@ export default function WhatYouGet() {
             </div>
           ))}
         </div>
-
-        <p className="note-line">
-          <em>In development:</em> stablecoin payments from Stellar wallets such
-          as Lobstr — you still receive naira in your bank.
-        </p>
       </div>
     </section>
   );

@@ -1,26 +1,38 @@
 const chips = [
   { label: "WhatsApp Cloud API" },
   { label: "Paystack" },
-  { label: "Stellar", state: "in development", dev: true },
-  { label: "Lobstr", state: "in development", dev: true },
+  { label: "Stellar", note: "coming soon" },
+  { label: "Lobstr", note: "coming soon" },
 ];
 
 export default function BuiltOn() {
   return (
-    <section className="section" id="built-on">
+    <section className="section surface-raised" id="built-on">
       <div className="contain">
+        <span className="section-label">Built on</span>
         <h2 className="section-heading">
-          Built on rails your buyers already trust
+          Rails your buyers<br />already trust.
         </h2>
-        <p className="lead">
-          ConFam sits on the networks Nigerian buyers and sellers use today, and
-          adds new ones only when they're ready.
+        <p className="section-sub">
+          ConFam doesn't ask anyone to learn a new way to pay. It sits on the
+          networks Nigerian and Ghanaian buyers and sellers use today.
         </p>
 
         <div className="chip-row">
-          {chips.map(({ label, state, dev }) => (
-            <span className={dev ? "chip dev" : "chip"} key={label}>
-              {label} {state && <span className="state">{state}</span>}
+          {chips.map(({ label, note }) => (
+            <span className="chip" key={label}>
+              {label}
+              {note && (
+                <span style={{
+                  fontSize:"0.75rem",
+                  color:"var(--text-faint)",
+                  borderLeft:"1px solid rgba(255,255,255,0.15)",
+                  paddingLeft:"0.5rem",
+                  fontWeight:500
+                }}>
+                  {note}
+                </span>
+              )}
             </span>
           ))}
         </div>
