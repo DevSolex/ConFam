@@ -234,8 +234,8 @@ USAGE_MESSAGE = (
     "Sorry, I didn't understand that.\n\n"
     "Available commands:\n"
     "  REGISTER <business name> — register your business\n"
-    "  ONBOARD <account number> <bank code> — set up your payout account\n"
-    "  UPDATE <account number> <bank code> — change payout account\n"
+    "  ONBOARD <account number> <bank name> — set up your payout account\n"
+    "  UPDATE <account number> <bank name> — change payout account\n"
     "  PAY <amount in naira> <description> — create a payment link\n"
     "  LEDGER — get a PDF statement of your confirmed sales\n"
     "  CANCEL — cancel a pending account change\n\n"
@@ -256,14 +256,14 @@ REGISTRATION_INSTRUCTIONS = (
 )
 
 FINISH_SETUP_MESSAGE = (
-    "Finish setup first: send ONBOARD <account number> <bank code>\n\n"
-    "Example: ONBOARD 0123456789 058"
+    "Finish setup first: send ONBOARD <account number> <bank name>\n\n"
+    "Example: ONBOARD 0123456789 GTBank"
 )
 
 ALREADY_ONBOARDED_MESSAGE = (
     "Your payout account is already set. "
     "Changing it is a separate process.\n\n"
-    "Send: UPDATE <account number> <bank code> to change it, "
+    "Send: UPDATE <account number> <bank name> to change it, "
     "or PAY <amount> <description> to create a payment link."
 )
 
@@ -287,8 +287,8 @@ ACCOUNT_NOT_FOUND_MESSAGE = (
 
 PENDING_HELP_MESSAGE = (
     "You're registered — one step left.\n\n"
-    "Send: ONBOARD <account number> <bank code>\n"
-    "Example: ONBOARD 0123456789 058\n\n"
+    "Send: ONBOARD <account number> <bank name>\n"
+    "Example: ONBOARD 0123456789 GTBank\n\n"
     "That's all we need before you can start taking payments."
 )
 
@@ -488,46 +488,78 @@ def parse_pay_command(text: str) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 
-def parse_register_command(text: str) -> str:
+def parse_register_command(text: str) -> tuple[str, str]:
     """
-    Parse 'REGISTER <business name>' from the merchant's message.
-    Returns the business name.
-    Raises ParseError if format is wrong.
+    Parse 'REGISTER <business name> [GHANA]' from the merchant's message.
+    Returns (business_name, country) where country is 'nigeria' (default) or 'ghana'.
+
+    The country suffix is case-insensitive and optional. If omitted, country
+    defaults to 'nigeria' — no extra prompt, keeping the existing Nigeria flow
+    unchanged. Ghana merchants append GHANA as the last word:
+      REGISTER Adaeze Fashion Store          -> ('Adaeze Fashion Store', 'nigeria')
+      REGISTER Kwame Textiles GHANA          -> ('Kwame Textiles', 'ghana')
+
+    Design choice: suffix rather than a separate question step. This avoids
+    breaking the Nigeria flow (the vast majority of merchants) — they see no
+    change at all. Ghana merchants need only one extra word. A two-step question
+    would add a round-trip for every merchant regardless of country.
     """
     parts = text.strip().split(None, 1)
     if len(parts) < 2 or parts[0].upper() != "REGISTER":
         raise ParseError(USAGE_MESSAGE)
-    business_name = parts[1].strip()
-    if not business_name:
+    rest = parts[1].strip()
+    if not rest:
         raise ParseError(
             "Please include your business name.\n"
-            "Example: REGISTER Adaeze Fashion Store"
+            "Example: REGISTER Adaeze Fashion Store\n"
+            "Ghana merchants: REGISTER Kwame Textiles GHANA"
         )
-    if len(business_name) > 200:
+    # Check for supported country suffix (last word, case-insensitive)
+    country = "nigeria"
+    words = rest.split()
+    if words and words[-1].upper() == "GHANA":
+        country = "ghana"
+        rest = " ".join(words[:-1]).strip()
+        if not rest:
+            raise ParseError(
+                "Please include your business name before GHANA.\n"
+                "Example: REGISTER Kwame Textiles GHANA"
+            )
+    if len(rest) > 200:
         raise ParseError("Business name must be 200 characters or fewer.")
-    return business_name
+    return rest, country
 
 
-def parse_account_command(text: str, keyword: str) -> tuple[str, str]:
+def parse_onboard_command(text: str, keyword: str) -> tuple[str, str]:
     """
-    Parse 'ONBOARD <account_number> <bank_code>' or
-          'UPDATE  <account_number> <bank_code>'.
-    Returns (account_number, bank_code).
+    Parse 'ONBOARD <account_number> <bank name>' or
+          'UPDATE  <account_number> <bank name>'.
+    Returns (account_number, bank_name_raw).
+
+    bank_name_raw is everything after the account number — may be multiple words
+    (e.g. "Guaranty Trust Bank", "GTBank", "Ghana Commercial Bank").
+    The caller is responsible for resolving the name to a bank code via
+    confam.paystack.resolve_bank_name().
+
     Raises ParseError on bad format.
     """
     parts = text.strip().split()
-    if len(parts) != 3 or parts[0].upper() != keyword.upper():
+    if len(parts) < 3 or parts[0].upper() != keyword.upper():
         raise ParseError(
-            f"Format: {keyword.upper()} <10-digit account number> <bank code>\n"
-            f"Example: {keyword.upper()} 0123456789 058\n\n"
-            "To find your bank code, ask ConFam support."
+            f"Format: {keyword.upper()} <10-digit account number> <bank name>\n"
+            f"Example: {keyword.upper()} 0123456789 GTBank\n\n"
+            "Use the bank's full name or a short version — we'll find the right one."
         )
-    account_number, bank_code = parts[1], parts[2]
+    account_number = parts[1]
+    bank_name_raw = " ".join(parts[2:]).strip()
     if not account_number.isdigit() or len(account_number) != 10:
         raise ParseError("Account number must be exactly 10 digits.\nExample: 0123456789")
-    if not bank_code.isdigit():
-        raise ParseError("Bank code must be numeric.\nExample: 058 for GTBank")
-    return account_number, bank_code
+    if not bank_name_raw:
+        raise ParseError(
+            f"Format: {keyword.upper()} <account number> <bank name>\n"
+            f"Example: {keyword.upper()} 0123456789 GTBank"
+        )
+    return account_number, bank_name_raw
 
 
 class UnregisteredSender(Exception):
@@ -706,11 +738,11 @@ def _route_command(conn, from_id: str, message_text: str, checkout_base: str) ->
     except UnregisteredSender:
         if cmd == "REGISTER":
             try:
-                business_name = parse_register_command(message_text)
+                business_name, country = parse_register_command(message_text)
             except ParseError as exc:
                 _send_whatsapp(from_id, str(exc))
                 return Response(status_code=200)
-            return _handle_register_command(conn, from_id, business_name)
+            return _handle_register_command(conn, from_id, business_name, country)
         _send_whatsapp(from_id, REGISTRATION_INSTRUCTIONS)
         log.warning("whatsapp_unregistered_sender", from_id=from_id)
         return Response(status_code=200)
@@ -739,11 +771,11 @@ def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
     """Commands available to a merchant who has registered but not onboarded."""
     if cmd == "ONBOARD":
         try:
-            account_number, bank_code = parse_account_command(message_text, "ONBOARD")
+            account_number, bank_name_raw = parse_onboard_command(message_text, "ONBOARD")
         except ParseError as exc:
             _send_whatsapp(from_id, str(exc))
             return Response(status_code=200)
-        return _handle_onboard_command(conn, from_id, merchant_id, account_number, bank_code)
+        return _handle_onboard_command(conn, from_id, merchant_id, account_number, bank_name_raw)
 
     if cmd == "PAY":
         _send_whatsapp(from_id, FINISH_SETUP_MESSAGE)
@@ -768,12 +800,48 @@ def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
         _send_whatsapp(
             from_id,
             "You don't have a pending payout account change to cancel. "
-            "If you haven't finished setup, send ONBOARD <account number> <bank code>.",
+            "If you haven't finished setup, send ONBOARD <account number> <bank name>.",
         )
         return Response(status_code=200)
 
     _send_whatsapp(from_id, PENDING_HELP_MESSAGE)
     return Response(status_code=200)
+
+
+def _merchant_currency(conn, merchant_id: str) -> str:
+    """Return the ISO 4217 currency code for the merchant's country.
+
+    Nigeria -> NGN, Ghana -> GHS.
+    Defaults to NGN for any unrecognised country value so existing merchants
+    are never broken by a missing or unexpected DB value.
+    """
+    _COUNTRY_CURRENCY = {"nigeria": "NGN", "ghana": "GHS"}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT country FROM merchants WHERE merchant_id = %s",
+            (merchant_id,),
+        )
+        row = cur.fetchone()
+    country = row[0] if row else "nigeria"
+    return _COUNTRY_CURRENCY.get(country, "NGN")
+
+
+def _merchant_currency(conn, merchant_id: str) -> str:
+    """Return the ISO 4217 currency code for the merchant's country.
+
+    Nigeria -> NGN, Ghana -> GHS.
+    Defaults to NGN for any unrecognised country value so existing merchants
+    are never broken by a missing or unexpected DB value.
+    """
+    _COUNTRY_CURRENCY = {"nigeria": "NGN", "ghana": "GHS"}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT country FROM merchants WHERE merchant_id = %s",
+            (merchant_id,),
+        )
+        row = cur.fetchone()
+    country = row[0] if row else "nigeria"
+    return _COUNTRY_CURRENCY.get(country, "NGN")
 
 
 def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) -> Response:
@@ -789,11 +857,11 @@ def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) 
 
     if cmd == "UPDATE":
         try:
-            account_number, bank_code = parse_account_command(message_text, "UPDATE")
+            account_number, bank_name_raw = parse_onboard_command(message_text, "UPDATE")
         except ParseError as exc:
             _send_whatsapp(from_id, str(exc))
             return Response(status_code=200)
-        return _handle_update_command(conn, from_id, merchant_id, account_number, bank_code)
+        return _handle_update_command(conn, from_id, merchant_id, account_number, bank_name_raw)
 
     if cmd in LEDGER_COMMANDS:
         return _handle_ledger_command(conn, from_id, merchant_id)
@@ -807,11 +875,12 @@ def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) 
 
     # Create payment link (in-process — no second HTTP hop)
     try:
+        currency = _merchant_currency(conn, merchant_id)
         link = create_link(
             conn=conn,
             merchant_id=merchant_id,
             amount_minor_units=amount_minor_units,
-            currency="NGN",
+            currency=currency,
             description=description,
         )
     except LinkValidationError as exc:
@@ -820,9 +889,11 @@ def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) 
         return Response(status_code=200)
 
     checkout_url = f"{checkout_base.rstrip('/')}/{link.link_id}"
+    _CURRENCY_SYMBOL = {"NGN": "₦", "GHS": "GH₵"}
+    symbol = _CURRENCY_SYMBOL.get(currency, currency + " ")
     reply = (
         f"Payment link created ✅\n\n"
-        f"Amount: ₦{amount_minor_units / 100:,.2f}\n"
+        f"Amount: {symbol}{amount_minor_units / 100:,.2f}\n"
         f"Item: {description}\n\n"
         f"Share this link with your buyer:\n{checkout_url}\n\n"
         f"The link expires in 30 minutes."
@@ -936,32 +1007,34 @@ def _handle_ledger_command(conn, from_id: str, merchant_id: str) -> Response:
 # ---------------------------------------------------------------------------
 
 
-def _handle_register_command(conn, from_id: str, business_name: str) -> Response:
+def _handle_register_command(conn, from_id: str, business_name: str, country: str = "nigeria") -> Response:
     """
-    REGISTER <business name> — create a new merchant account.
+    REGISTER <business name> [GHANA] — create a new merchant account.
 
     Creates a merchant with status=pending_verification and confam_thread_id
-    set to the sender's WhatsApp ID (bare digits). The merchant can then
-    use ONBOARD to add their bank account.
+    set to the sender's WhatsApp ID (bare digits). country defaults to 'nigeria';
+    Ghana merchants pass 'ghana'. The merchant can then use ONBOARD to add
+    their bank account.
     """
+    country_line = f"\nCountry: Ghana" if country == "ghana" else ""
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO merchants (whatsapp_number, confam_thread_id, business_name, status)
-                   VALUES (%s, %s, %s, 'pending_verification') RETURNING merchant_id""",
-                (f"+{from_id}", from_id, business_name),
+                """INSERT INTO merchants (whatsapp_number, confam_thread_id, business_name, status, country)
+                   VALUES (%s, %s, %s, 'pending_verification', %s) RETURNING merchant_id""",
+                (f"+{from_id}", from_id, business_name, country),
             )
             merchant_id = str(cur.fetchone()[0])
         conn.commit()
         _send_whatsapp(
             from_id,
             f"✅ Business registered!\n\n"
-            f"Business: {business_name}\n\n"
+            f"Business: {business_name}{country_line}\n\n"
             f"Next step — set up your payout account:\n"
-            f"Send: ONBOARD <account number> <bank code>\n"
-            f"Example: ONBOARD 0123456789 058",
+            f"Send: ONBOARD <account number> <bank name>\n"
+            f"Example: ONBOARD 0123456789 GTBank",
         )
-        log.info("merchant_registered_via_whatsapp", from_id=from_id, merchant_id=merchant_id)
+        log.info("merchant_registered_via_whatsapp", from_id=from_id, merchant_id=merchant_id, country=country)
     except Exception as exc:
         if "unique" in str(exc).lower():
             # Lost a race with a concurrent REGISTER from the same sender.
@@ -975,24 +1048,28 @@ def _handle_register_command(conn, from_id: str, business_name: str) -> Response
 
 
 def _handle_onboard_command(
-    conn, from_id: str, merchant_id: str, account_number: str, bank_code: str
+    conn, from_id: str, merchant_id: str, account_number: str, bank_name_raw: str
 ) -> Response:
     """
-    ONBOARD <account_number> <bank_code> — first-time payout account setup.
-    Calls Paystack bank/resolve + create_subaccount in-process.
+    ONBOARD <account_number> <bank name> — first-time payout account setup.
+
+    1. Resolves the typed bank name to a Paystack bank code via the cached
+       bank list for the merchant's country (Nigeria/Ghana).
+    2. Calls Paystack bank/resolve to verify the account number.
+    3. Creates a Paystack subaccount.
+    4. Writes the PayoutAccount row and activates the merchant.
     """
     from confam.payout_accounts import NoActivePayoutAccount, get_active_payout_account
     from confam.paystack import (
+        BankNameNotResolved,
         PaystackError,
         PaystackRateLimited,
         create_subaccount,
         resolve_bank_account,
+        resolve_bank_name,
     )
 
-    # A merchant that already onboarded must not get a second account. Routing
-    # normally catches this, but re-check here: the status and this command can
-    # race (two ONBOARDs in flight), and the unique index that used to prevent
-    # a second active account was dropped in migration 010.
+    # A merchant that already onboarded must not get a second account.
     try:
         get_active_payout_account(conn, merchant_id)
     except NoActivePayoutAccount:
@@ -1007,6 +1084,50 @@ def _handle_onboard_command(
         _send_whatsapp(from_id, RATE_LIMIT_MESSAGE)
         return Response(status_code=200)
 
+    # Get merchant's country to look up the correct bank list.
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT country, business_name FROM merchants WHERE merchant_id = %s",
+            (merchant_id,),
+        )
+        row = cur.fetchone()
+    merchant_country = row[0] if row else "nigeria"
+    business_name_db = row[1] if row else None
+
+    # Resolve the typed bank name to a Paystack bank code.
+    try:
+        bank_code, resolved_bank_display = resolve_bank_name(bank_name_raw, merchant_country)
+    except BankNameNotResolved as exc:
+        candidates_text = ""
+        if exc.candidates:
+            names = "\n".join(f"  • {c.name}" for c in exc.candidates[:3])
+            candidates_text = (
+                f"\n\nDid you mean one of these?\n{names}\n\n"
+                f"Send the full name exactly as shown above."
+            )
+        _send_whatsapp(
+            from_id,
+            f"We couldn't find a bank named '{bank_name_raw}'.{candidates_text}\n\n"
+            f"Try: ONBOARD {account_number} <exact bank name>",
+        )
+        log.warning(
+            "onboard_bank_name_not_resolved",
+            from_id=from_id,
+            merchant_id=merchant_id,
+            bank_name=bank_name_raw,
+            country=merchant_country,
+        )
+        return Response(status_code=200)
+    except PaystackError as exc:
+        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+        log.warning(
+            "onboard_bank_list_failed",
+            from_id=from_id,
+            merchant_id=merchant_id,
+            error=str(exc),
+        )
+        return Response(status_code=200)
+
     # Verify bank account with Paystack
     try:
         resolved = resolve_bank_account(account_number=account_number, bank_code=bank_code)
@@ -1015,7 +1136,6 @@ def _handle_onboard_command(
         log.warning("onboard_paystack_rate_limited", from_id=from_id, merchant_id=merchant_id)
         return Response(status_code=200)
     except PaystackError as exc:
-        # 422 — Paystack rejected the account number / bank code combination.
         _send_whatsapp(from_id, ACCOUNT_NOT_FOUND_MESSAGE)
         log.warning(
             "onboard_resolution_failed",
@@ -1025,11 +1145,7 @@ def _handle_onboard_command(
         )
         return Response(status_code=200)
 
-    # Get merchant's business name for Paystack subaccount
-    with conn.cursor() as cur:
-        cur.execute("SELECT business_name FROM merchants WHERE merchant_id = %s", (merchant_id,))
-        row = cur.fetchone()
-    business_name = (row[0] if row and row[0] else resolved.account_name)
+    business_name = business_name_db or resolved.account_name
 
     try:
         subaccount = create_subaccount(
@@ -1076,7 +1192,7 @@ def _handle_onboard_command(
             _send_whatsapp(
                 from_id,
                 "You already have an active payout account.\n"
-                "To change it, send: UPDATE <account number> <bank code>",
+                "To change it, send: UPDATE <account number> <bank name>",
             )
         else:
             log.error("onboard_db_write_failed", from_id=from_id, error=str(exc))
@@ -1087,6 +1203,7 @@ def _handle_onboard_command(
     _send_whatsapp(
         from_id,
         f"✅ Payout account set up!\n\n"
+        f"Bank: {resolved_bank_display}\n"
         f"Account holder: {resolved.account_name}\n"
         f"Account: {masked}\n\n"
         f"You're ready to accept payments.\n"
@@ -1098,11 +1215,12 @@ def _handle_onboard_command(
 
 
 def _handle_update_command(
-    conn, from_id: str, merchant_id: str, account_number: str, bank_code: str
+    conn, from_id: str, merchant_id: str, account_number: str, bank_name_raw: str
 ) -> Response:
     """
-    UPDATE <account_number> <bank_code> — change payout account with cooling-off.
-    Sends immediate notification. Merchant can reply CANCEL to abort.
+    UPDATE <account_number> <bank name> — change payout account with cooling-off.
+    Resolves bank name to code, verifies account, sends immediate notification.
+    Merchant can reply CANCEL to abort during the cooling-off window.
     """
     from confam.payout_accounts import (
         NoActivePayoutAccount,
@@ -1110,15 +1228,55 @@ def _handle_update_command(
         request_payout_account_change,
     )
     from confam.paystack import (
+        BankNameNotResolved,
         PaystackError,
         PaystackRateLimited,
         create_subaccount,
         resolve_bank_account,
+        resolve_bank_name,
     )
 
     # UPDATE spends the same Paystack bank/resolve quota as ONBOARD — same limit.
     if check_resolve_rate_limit(from_id):
         _send_whatsapp(from_id, RATE_LIMIT_MESSAGE)
+        return Response(status_code=200)
+
+    # Get merchant's country for the correct bank list.
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT country, business_name FROM merchants WHERE merchant_id = %s",
+            (merchant_id,),
+        )
+        row = cur.fetchone()
+    merchant_country = row[0] if row else "nigeria"
+    business_name_db = row[1] if row else None
+
+    # Resolve bank name to code.
+    try:
+        bank_code, resolved_bank_display = resolve_bank_name(bank_name_raw, merchant_country)
+    except BankNameNotResolved as exc:
+        candidates_text = ""
+        if exc.candidates:
+            names = "\n".join(f"  • {c.name}" for c in exc.candidates[:3])
+            candidates_text = (
+                f"\n\nDid you mean one of these?\n{names}\n\n"
+                f"Send the full name exactly as shown above."
+            )
+        _send_whatsapp(
+            from_id,
+            f"We couldn't find a bank named '{bank_name_raw}'.{candidates_text}\n\n"
+            f"Try: UPDATE {account_number} <exact bank name>",
+        )
+        log.warning(
+            "update_bank_name_not_resolved",
+            from_id=from_id,
+            merchant_id=merchant_id,
+            bank_name=bank_name_raw,
+        )
+        return Response(status_code=200)
+    except PaystackError as exc:
+        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+        log.warning("update_bank_list_failed", from_id=from_id, error=str(exc))
         return Response(status_code=200)
 
     try:
@@ -1133,10 +1291,7 @@ def _handle_update_command(
         )
         return Response(status_code=200)
 
-    with conn.cursor() as cur:
-        cur.execute("SELECT business_name FROM merchants WHERE merchant_id = %s", (merchant_id,))
-        row = cur.fetchone()
-    business_name = (row[0] if row and row[0] else resolved.account_name)
+    business_name = business_name_db or resolved.account_name
 
     try:
         subaccount = create_subaccount(
@@ -1164,7 +1319,7 @@ def _handle_update_command(
         _send_whatsapp(
             from_id,
             "You don't have a payout account set up yet.\n"
-            "Send: ONBOARD <account number> <bank code>",
+            "Send: ONBOARD <account number> <bank name>",
         )
         return Response(status_code=200)
     except PendingChangeAlreadyExists:
@@ -1181,6 +1336,7 @@ def _handle_update_command(
     _send_whatsapp(
         from_id,
         f"⚠️ Payout account change requested\n\n"
+        f"Bank: {resolved_bank_display}\n"
         f"New account: {masked} ({resolved.account_name})\n"
         f"Takes effect in: {cooling} hours\n\n"
         f"If this wasn't you, reply CANCEL immediately.",
@@ -1242,6 +1398,7 @@ def send_payment_confirmed_notification(
     merchant_confam_thread_id: str,
     amount_minor_units: int,
     link_id: str,
+    currency: str = "NGN",
 ) -> None:
     """
     Send a WhatsApp payment-confirmation message to the merchant.
@@ -1252,13 +1409,18 @@ def send_payment_confirmed_notification(
     merchant_confam_thread_id: bare digits format for Meta Cloud API,
     e.g. "2348012345678". Must match what is stored in merchants.confam_thread_id.
 
+    currency: ISO 4217 code — NGN for Nigeria, GHS for Ghana. Defaults to NGN
+    for backward compatibility with existing callers that omit this argument.
+
     Rule 10: if Meta Cloud API is unreachable, the error is logged but
     settlement is NOT re-triggered — the ledger entry is already written.
     """
-    naira = amount_minor_units / 100
+    _CURRENCY_SYMBOL = {"NGN": "₦", "GHS": "GH₵"}
+    symbol = _CURRENCY_SYMBOL.get(currency, currency + " ")
+    amount_display = amount_minor_units / 100
     message = (
         f"Payment received ✅\n\n"
-        f"Amount: ₦{naira:,.2f}\n"
+        f"Amount: {symbol}{amount_display:,.2f}\n"
         f"Paystack is processing settlement to your bank account.\n\n"
         f"Reference: {link_id[:8]}..."
     )
@@ -1267,6 +1429,7 @@ def send_payment_confirmed_notification(
         "merchant_payment_notification_sent",
         confam_thread_id=merchant_confam_thread_id,
         amount_minor_units=amount_minor_units,
+        currency=currency,
         link_id=link_id,
     )
 

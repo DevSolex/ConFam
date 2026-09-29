@@ -1,16 +1,11 @@
+import PhoneMockup from "./PhoneMockup.jsx";
+
 export default function FinalCta() {
   return (
     <section className="section band cta" id="join">
       <div className="split contain">
         <div>
-          {/* TODO: replace with real photo — a seller replying to a ConFam ONBOARD message on WhatsApp */}
-          <img
-            className="photo"
-            src="/assets/img/placeholder-cta.svg"
-            alt="A seller replying to a ConFam ONBOARD message on WhatsApp"
-            width="900"
-            height="675"
-          />
+          <PhoneMockup variant="ledger" />
         </div>
         <div>
           <h2 className="section-heading">Join the private pilot.</h2>
@@ -18,12 +13,13 @@ export default function FinalCta() {
             Tell us how you sell on WhatsApp, and we'll set up your account
             during the pilot. It's free — that's the whole point.
           </p>
-          {/* REPLACE-WITH-YOUR-EMAIL: point this mailto at your real address before launch */}
           <a
             className="btn arrow"
-            href="mailto:REPLACE-WITH-YOUR-EMAIL@example.com?subject=ConFam%20pilot"
+            href="https://wa.me/2348051338460?text=Hi%2C%20I%27d%20like%20to%20join%20the%20ConFam%20pilot"
+            target="_blank"
+            rel="noopener noreferrer"
           >
-            Join the pilot
+            Message us on WhatsApp
           </a>
         </div>
       </div>

@@ -1028,3 +1028,19 @@ img {
     width: 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Phone mockup SVGs — same visual treatment as .photo
+   Applies to PhoneMockup components placed inside .hero-media or .split divs.
+   SVGs use width="100%" height="auto" so they fill their column naturally at
+   any viewport width, including 360px where the grid collapses to 1 column.
+   --------------------------------------------------------------------------- */
+
+.hero-media > svg,
+.split > div > svg {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}

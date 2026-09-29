@@ -1,3 +1,5 @@
+import PhoneMockup from "./PhoneMockup.jsx";
+
 export default function WhyWeBuiltIt() {
   return (
     <section className="section paper-bg" id="why-we-built-it">
@@ -18,14 +20,7 @@ export default function WhyWeBuiltIt() {
           </p>
         </div>
         <div>
-          {/* TODO: replace with real photo — a stall owner showing a payment notification to a customer before handing over the order */}
-          <img
-            className="photo"
-            src="/assets/img/placeholder-why.svg"
-            alt="A stall owner showing her phone to a customer before handing over an order"
-            width="900"
-            height="675"
-          />
+          <PhoneMockup variant="payment-received" />
         </div>
       </div>
     </section>

@@ -1,3 +1,5 @@
+import PhoneMockup from "./PhoneMockup.jsx";
+
 export default function WhatWeDo() {
   return (
     <section className="section paper-bg" id="what-we-do">
@@ -37,14 +39,7 @@ export default function WhatWeDo() {
           </ul>
         </div>
         <div>
-          {/* TODO: replace with real photo — a trader quoting a price in a WhatsApp conversation */}
-          <img
-            className="photo"
-            src="/assets/img/placeholder-work.svg"
-            alt="A trader quoting a price in a WhatsApp conversation on a phone propped against produce"
-            width="900"
-            height="675"
-          />
+          <PhoneMockup variant="register-flow" />
         </div>
       </div>
     </section>

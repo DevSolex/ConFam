@@ -32,9 +32,12 @@ Paystack Split Payment model (verified against docs.paystack.com):
     Paystack," not "merchant's bank account credited."
 """
 
+import difflib
 import hashlib
 import hmac
 import os
+import re
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -106,6 +109,38 @@ class CreatedSubaccount:
     """Result of a successful Create Subaccount API call."""
     subaccount_code: str   # e.g. ACCT_xxxxxxxxxx — stored on PayoutAccount
     business_name: str
+
+
+@dataclass(frozen=True)
+class BankListEntry:
+    """One entry from Paystack's GET /bank list."""
+    name: str
+    code: str
+    country: str
+
+
+class BankNameNotResolved(PaystackError):
+    """Raised when a typed bank name cannot be confidently matched to a Paystack bank code.
+
+    `candidates` carries the top-3 closest banks from the list so the caller
+    can show suggestions to the merchant rather than just saying "not found".
+    """
+    def __init__(self, message: str, candidates: list[BankListEntry]) -> None:
+        self.candidates = candidates
+        super().__init__(message)
+
+
+# In-memory cache: country -> (fetched_at_monotonic, list[BankListEntry])
+# A one-hour TTL is adequate — the bank list is stable and the list is small.
+_BANK_LIST_CACHE: dict[str, tuple[float, list[BankListEntry]]] = {}
+_BANK_LIST_CACHE_TTL_SECONDS = 3600
+
+# Noise words to strip before fuzzy matching a bank name.
+# These appear in almost every bank name and add no discriminating signal.
+_BANK_NOISE_WORDS = frozenset({
+    "bank", "plc", "ltd", "limited", "microfinance", "mfb",
+    "savings", "finance", "nigeria", "ghana", "the",
+})
 
 
 def _secret_key() -> str:
@@ -383,4 +418,185 @@ def create_subaccount(
     return CreatedSubaccount(
         subaccount_code=sub["subaccount_code"],
         business_name=sub["business_name"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bank list — cached lookup and name resolution
+# ---------------------------------------------------------------------------
+
+def list_banks(country: str) -> list[BankListEntry]:
+    """
+    Return Paystack's bank list for `country`, using an in-memory cache.
+
+    Paystack's GET /bank?country=<country> list rarely changes (new banks appear
+    quarterly at most). We cache it for _BANK_LIST_CACHE_TTL_SECONDS (1 hour)
+    so ONBOARD / UPDATE don't make an API call on every invocation.
+
+    `country` must be the Paystack-recognised string — 'nigeria' or 'ghana'.
+
+    Raises PaystackError on API failure or if the response carries status=false.
+    Raises PaystackRateLimited on HTTP 429.
+
+    The cache is module-level (process-local). In a multi-instance deployment
+    each process fills its own cache independently, which is acceptable — the
+    list is idempotent and the extra API calls are harmless. A Redis-backed
+    cache is a future upgrade if the pilot grows to many concurrent instances.
+    """
+    now = time.monotonic()
+    cached = _BANK_LIST_CACHE.get(country)
+    if cached is not None:
+        fetched_at, entries = cached
+        if now - fetched_at < _BANK_LIST_CACHE_TTL_SECONDS:
+            return entries
+
+    try:
+        response = httpx.get(
+            f"{PAYSTACK_API_BASE}/bank",
+            headers={"Authorization": f"Bearer {_secret_key()}"},
+            params={"country": country, "perPage": "200", "use_cursor": "false"},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.TimeoutException as exc:
+        raise PaystackError(f"Paystack /bank list timed out for country={country}.") from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 429:
+            raise PaystackRateLimited(
+                f"Paystack /bank list rate limited (429) for country={country}."
+            ) from exc
+        raise PaystackError(
+            f"Paystack /bank list failed: HTTP {status} for country={country}"
+        ) from exc
+
+    if not data.get("status"):
+        raise PaystackError(
+            f"Paystack /bank list returned status=false for country={country}: "
+            f"{data.get('message')}"
+        )
+
+    entries = [
+        BankListEntry(
+            name=b.get("name", ""),
+            code=b.get("code", ""),
+            country=b.get("country", country),
+        )
+        for b in data.get("data", [])
+        if b.get("active", True) and b.get("code")
+    ]
+
+    _BANK_LIST_CACHE[country] = (time.monotonic(), entries)
+    log.info("bank_list_fetched", country=country, count=len(entries))
+    return entries
+
+
+def _normalise_bank_name(name: str) -> str:
+    """Lowercase, strip noise words, strip punctuation, collapse whitespace.
+
+    'Guaranty Trust Bank PLC' -> 'guaranty trust'
+    'GTBank'                  -> 'gtbank'
+    'First Bank of Nigeria'   -> 'first'
+    'Access Bank'             -> 'access'
+    """
+    # Lowercase and replace punctuation/hyphens with spaces
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", name.lower())
+    # Split and filter noise words; also filter single-char words and "of", "for"
+    words = [
+        w for w in cleaned.split()
+        if w and w not in _BANK_NOISE_WORDS and w not in {"of", "for", "and"}
+    ]
+    return " ".join(words)
+
+
+def _initialism(name: str) -> str:
+    """Return the initialism of normalised meaningful words.
+
+    'guaranty trust' -> 'gt'
+    'access'         -> 'access'  (single word — return as-is, no abbreviation benefit)
+    'united bank africa' -> 'uba'
+    """
+    words = _normalise_bank_name(name).split()
+    if len(words) <= 1:
+        return _normalise_bank_name(name)
+    return "".join(w[0] for w in words if w)
+
+
+def resolve_bank_name(bank_name_input: str, country: str) -> tuple[str, str]:
+    """
+    Fuzzy-match a merchant's typed bank name against Paystack's bank list and
+    return (bank_code, canonical_bank_name).
+
+    Matching strategy (confidence thresholds):
+      1. Exact match after normalisation.
+      2. Normalised needle is a substring of normalised candidate (or vice versa),
+         and the overlapping part is at least 4 characters long.
+      3. If no confident match is found via (1)/(2), falls back to difflib
+         SequenceMatcher and uses the best ratio match if ratio >= 0.72.
+
+    If no match is found at all, raises BankNameNotResolved with the top-3
+    candidates by SequenceMatcher ratio so the caller can show suggestions.
+
+    Raises PaystackError if list_banks() fails (API unreachable etc.).
+    """
+    banks = list_banks(country)
+    needle = _normalise_bank_name(bank_name_input)
+    # Also compute the "raw" needle with no noise stripping, for initialism matching
+    needle_raw = re.sub(r"[^a-z0-9]", "", bank_name_input.lower())
+
+    if not needle and not needle_raw:
+        candidates = banks[:3]
+        raise BankNameNotResolved(
+            f"Could not parse bank name '{bank_name_input}'. "
+            f"Found {len(candidates)} candidate(s).",
+            candidates=candidates,
+        )
+
+    # --- Pass 1: exact and substring matches on normalised names ---
+    for bank in banks:
+        candidate = _normalise_bank_name(bank.name)
+        if not candidate:
+            continue
+        # Exact normalised match
+        if needle == candidate:
+            return bank.code, bank.name
+        # Substring (at least 4 chars overlap)
+        overlap = needle if needle in candidate else (candidate if candidate in needle else "")
+        if len(overlap) >= 4:
+            return bank.code, bank.name
+
+    # --- Pass 2: initialism match ---
+    # e.g. input "GTBank" -> raw "gtbank"; candidate "Guaranty Trust Bank" -> initialism "gt"
+    # We check if needle_raw starts with the bank's initialism (handles "gtbank", "uba", etc.)
+    for bank in banks:
+        bank_initialism = _initialism(bank.name)
+        if len(bank_initialism) >= 2 and needle_raw.startswith(bank_initialism):
+            return bank.code, bank.name
+        # Also: if the needle IS the initialism exactly
+        if needle_raw == bank_initialism and len(bank_initialism) >= 2:
+            return bank.code, bank.name
+
+    # --- Pass 3: fuzzy ratio fallback (difflib) ---
+    scored: list[tuple[float, BankListEntry]] = []
+    for bank in banks:
+        candidate = _normalise_bank_name(bank.name)
+        ratio = difflib.SequenceMatcher(None, needle, candidate).ratio()
+        # Also score against raw needle vs raw bank name (catches typos in abbreviations)
+        ratio_raw = difflib.SequenceMatcher(
+            None, needle_raw, re.sub(r"[^a-z0-9]", "", bank.name.lower())
+        ).ratio()
+        scored.append((max(ratio, ratio_raw), bank))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    top = [b for _, b in scored[:3]]
+
+    best_ratio, best_bank = scored[0] if scored else (0.0, None)
+    if best_ratio >= 0.72 and best_bank is not None:
+        return best_bank.code, best_bank.name
+
+    raise BankNameNotResolved(
+        f"Could not confidently match '{bank_name_input}' to a bank in {country}. "
+        f"Top candidates: {', '.join(b.name for b in top)}.",
+        candidates=top,
     )

@@ -58,19 +58,25 @@ class LedgerRow:
     status: str
     entry_type: str
     rail: str
+    currency: str = "NGN"  # ISO 4217 — NGN for Nigeria, GHS for Ghana
 
 
-def format_naira(amount_minor_units: int) -> str:
-    """Format kobo as a grouped naira string using integer arithmetic only.
+def format_amount(amount_minor_units: int, currency: str = "NGN") -> str:
+    """Format an amount in minor units as a currency string.
 
-    75000 -> 'NGN 750.00', 1 -> 'NGN 0.01', 1234567 -> 'NGN 12,345.67'
+    Uses integer arithmetic only (Engineering Rule 6).
+
+    75000, 'NGN' -> 'NGN 750.00'
+    75000, 'GHS' -> 'GHS 750.00'
+    1234567, 'NGN' -> 'NGN 12,345.67'
 
     Uses divmod on ints rather than dividing by 100.0 so large or long-running
     balances never pick up float rounding error (Engineering Rule 6).
 
-    The PDF uses the 'NGN' code rather than the '₦' sign: fpdf2's built-in
-    Helvetica core font is latin-1 only, and '₦' (U+20A6) is outside that
-    range, so a naira sign would raise FPDFUnicodeEncodingException.
+    The PDF uses the ISO currency code rather than the symbol (₦/GH₵): fpdf2's
+    built-in Helvetica core font is latin-1 only, and ₦ (U+20A6) / ₵ (U+20B5)
+    are outside that range, so a currency symbol would raise
+    FPDFUnicodeEncodingException.
     """
     if not isinstance(amount_minor_units, int):
         raise TypeError(
@@ -78,8 +84,12 @@ def format_naira(amount_minor_units: int) -> str:
         )
 
     sign = "-" if amount_minor_units < 0 else ""
-    whole, kobo = divmod(abs(amount_minor_units), KIBO_PER_NAIRA)
-    return f"{sign}NGN {whole:,}.{kobo:02d}"
+    whole, minor = divmod(abs(amount_minor_units), KIBO_PER_NAIRA)
+    return f"{sign}{currency} {whole:,}.{minor:02d}"
+
+
+# Backward-compatible alias — existing callers that import format_naira continue to work.
+format_naira = format_amount
 
 
 def ledger_row_status(entry_type: str) -> str:
@@ -167,7 +177,8 @@ def fetch_ledger_rows(
                       l.description,
                       e.amount_minor_units,
                       e.entry_type,
-                      e.rail
+                      e.rail,
+                      e.currency
                  FROM ledger_entries e
                  JOIN payment_links l ON l.link_id = e.link_id
                 WHERE e.merchant_id = %s
@@ -185,8 +196,9 @@ def fetch_ledger_rows(
             status=ledger_row_status(entry_type),
             entry_type=entry_type,
             rail=rail,
+            currency=currency,
         )
-        for confirmed_at, description, amount_minor_units, entry_type, rail in raw
+        for confirmed_at, description, amount_minor_units, entry_type, rail, currency in raw
     ]
     rows.reverse()  # oldest first for display
 
@@ -281,7 +293,7 @@ def _add_table_row(pdf: _StatementPDF, row: LedgerRow) -> None:
     pdf.cell(
         _COL_AMOUNT_MM,
         _ROW_HEIGHT_MM,
-        format_naira(row.amount_minor_units),
+        format_amount(row.amount_minor_units, row.currency),
         border=1,
         align="R",
     )
@@ -300,14 +312,14 @@ def _add_truncation_note(pdf: _StatementPDF, rows_shown: int, total_count: int) 
     pdf.cell(0, _ROW_HEIGHT_MM, note, new_x="LMARGIN", new_y="NEXT")
 
 
-def _add_running_total(pdf: _StatementPDF, running_total_minor_units: int) -> None:
+def _add_running_total(pdf: _StatementPDF, running_total_minor_units: int, currency: str = "NGN") -> None:
     """The running total, labelled so it cannot be read as a payout balance."""
     pdf.ln(1)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(
         0,
         _ROW_HEIGHT_MM,
-        f"{_RUNNING_TOTAL_LABEL}: {format_naira(running_total_minor_units)}",
+        f"{_RUNNING_TOTAL_LABEL}: {format_amount(running_total_minor_units, currency)}",
         new_x="LMARGIN",
         new_y="NEXT",
     )
@@ -365,7 +377,9 @@ def build_statement_pdf(
         _add_table_row(pdf, row)
         running_total += row.amount_minor_units
 
-    _add_running_total(pdf, running_total)
+    # All rows for a merchant share the same currency; use the first row's value.
+    total_currency = rows[0].currency if rows else "NGN"
+    _add_running_total(pdf, running_total, total_currency)
     _add_disclaimer(pdf)
 
     return bytes(pdf.output())

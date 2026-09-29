@@ -1,3 +1,5 @@
+import PhoneMockup from "./PhoneMockup.jsx";
+
 export default function Hero() {
   return (
     <section className="hero contain" id="top">
@@ -10,8 +12,13 @@ export default function Hero() {
             own verified bank account, and nobody ever asks for a screenshot.
           </p>
           <div className="hero-actions">
-            <a className="btn arrow" href="#join">
-              Join the pilot
+            <a
+              className="btn arrow"
+              href="https://wa.me/2348051338460?text=Hi%2C%20I%27d%20like%20to%20join%20the%20ConFam%20pilot"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Message us on WhatsApp
             </a>
             <a className="btn secondary" href="#how">
               See how it works
@@ -20,14 +27,7 @@ export default function Hero() {
         </div>
 
         <div className="hero-media">
-          {/* TODO: replace with real photo — a Nigerian seller checking a payment notification on her phone */}
-          <img
-            className="photo"
-            src="/assets/img/placeholder-hero.svg"
-            alt="A Nigerian seller checking a payment notification on her phone"
-            width="900"
-            height="1125"
-          />
+          <PhoneMockup variant="pay-flow" />
 
           {/* Example card (a): payment received notification */}
           <div className="float-card top">
