@@ -44,6 +44,17 @@ import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
 
 from confam.db import close_pool, get_conn
+from confam.interactive import (
+    COMMON_BANKS_BY_COUNTRY,
+    PENDING_BANK_SELECTION_TTL_SECONDS,
+    clear_pending_bank_selection,
+    decode_bank_id,
+    decode_register_id,
+    get_pending_bank_selection,
+    send_onboard_bank_list,
+    send_register_country_buttons,
+    set_pending_bank_selection,
+)
 from confam.links import LinkValidationError, create_link
 from services.messaging.statement import (
     build_statement_pdf,
@@ -691,11 +702,20 @@ async def whatsapp_webhook(request: Request) -> Response:
         return Response(status_code=200)
 
     message = messages[0]
-    if message.get("type") != "text":
-        # Only handle text messages for now
+    msg_type = message.get("type")
+    from_id = message.get("from", "")          # bare digits, e.g. "2348012345678"
+
+    # Route interactive replies (button_reply, list_reply) separately from text.
+    if msg_type == "interactive":
+        log.info("whatsapp_interactive_received", from_id=from_id)
+        checkout_base = os.environ.get("CHECKOUT_BASE_URL", "http://localhost:8001")
+        with get_conn() as conn:
+            return _route_interactive(conn, from_id, message, checkout_base)
+
+    if msg_type != "text":
+        # Only handle text and interactive messages for now
         return Response(status_code=200)
 
-    from_id = message.get("from", "")          # bare digits, e.g. "2348012345678"
     message_text = message.get("text", {}).get("body", "").strip()
 
     log.info("whatsapp_message_received", from_id=from_id, body_length=len(message_text))
@@ -704,6 +724,146 @@ async def whatsapp_webhook(request: Request) -> Response:
 
     with get_conn() as conn:
         return _route_command(conn, from_id, message_text, checkout_base)
+
+
+def _route_interactive(conn, from_id: str, message: dict, checkout_base: str) -> Response:
+    """Dispatch inbound interactive replies (button_reply, list_reply).
+
+    Meta sends interactive messages with:
+      message.interactive.type == "button_reply"  (from reply buttons)
+      message.interactive.type == "list_reply"    (from list messages)
+
+    Any other interactive type is silently ignored — returning 200 to prevent
+    Meta retrying events we don't handle.
+    """
+    interactive = message.get("interactive", {})
+    interactive_type = interactive.get("type", "")
+
+    if interactive_type == "button_reply":
+        reply_id = interactive.get("button_reply", {}).get("id", "")
+        log.info("whatsapp_button_reply", from_id=from_id, reply_id=reply_id[:40])
+        return _handle_button_reply(conn, from_id, reply_id)
+
+    if interactive_type == "list_reply":
+        reply_id = interactive.get("list_reply", {}).get("id", "")
+        log.info("whatsapp_list_reply", from_id=from_id, reply_id=reply_id[:40])
+        return _handle_list_reply(conn, from_id, reply_id)
+
+    log.info(
+        "whatsapp_interactive_unknown_type",
+        from_id=from_id,
+        interactive_type=interactive_type,
+    )
+    return Response(status_code=200)
+
+
+def _handle_button_reply(conn, from_id: str, reply_id: str) -> Response:
+    """Handle a button reply — currently only register:<CC>:<name> ids.
+
+    If the id is well-formed, complete registration.
+    If malformed or unknown, reply with a graceful message (not a crash).
+    """
+    parsed = decode_register_id(reply_id)
+    if parsed is not None:
+        country, business_name = parsed
+        return _handle_register_command(conn, from_id, business_name, country)
+
+    # Unknown button id — log and reply gracefully.
+    log.warning(
+        "whatsapp_unknown_button_reply_id",
+        from_id=from_id,
+        reply_id=reply_id[:60],
+    )
+    _send_whatsapp(
+        from_id,
+        "Sorry, that reply wasn't recognised.\n\n"
+        "To register, send: REGISTER <your business name>",
+    )
+    return Response(status_code=200)
+
+
+def _handle_list_reply(conn, from_id: str, reply_id: str) -> Response:
+    """Handle a list reply — bank:* ids from the ONBOARD bank list.
+
+    Two valid cases:
+      bank:<code>  — merchant tapped a real bank; store pending selection,
+                     ask for their account number.
+      bank:other   — merchant tapped "Other"; point them to the typed flow.
+
+    Any other id is handled gracefully.
+    """
+    bank_code = decode_bank_id(reply_id)
+
+    if bank_code is None:
+        log.warning(
+            "whatsapp_unknown_list_reply_id",
+            from_id=from_id,
+            reply_id=reply_id[:60],
+        )
+        _send_whatsapp(
+            from_id,
+            "Sorry, that selection wasn't recognised.\n\n"
+            "Send ONBOARD to see the bank list again, or:\n"
+            "ONBOARD <account number> <bank name>",
+        )
+        return Response(status_code=200)
+
+    if bank_code == "other":
+        _send_whatsapp(
+            from_id,
+            "No problem — type your bank name directly:\n\n"
+            "ONBOARD <10-digit account number> <bank name>\n"
+            "Example: ONBOARD 0123456789 Polaris Bank",
+        )
+        return Response(status_code=200)
+
+    # Resolve the merchant_id so we can store the pending selection.
+    try:
+        merchant = resolve_merchant(conn, from_id)
+    except UnregisteredSender:
+        _send_whatsapp(from_id, REGISTRATION_INSTRUCTIONS)
+        return Response(status_code=200)
+
+    merchant_id = merchant["merchant_id"]
+    status = merchant["status"]
+
+    if status == "active":
+        # Already onboarded — can't use this flow.
+        _send_whatsapp(from_id, ALREADY_ONBOARDED_MESSAGE)
+        return Response(status_code=200)
+
+    if status not in ACTIONABLE_STATUSES:
+        _send_whatsapp(from_id, SUPPORT_MESSAGE)
+        return Response(status_code=200)
+
+    # Store the pending selection and ask for the account number.
+    set_pending_bank_selection(conn, merchant_id, bank_code)
+
+    # Look up the bank display name to confirm to the merchant.
+    with conn.cursor() as cur:
+        cur.execute("SELECT country FROM merchants WHERE merchant_id = %s", (merchant_id,))
+        row = cur.fetchone()
+    country = row[0] if row else "nigeria"
+    bank_display = bank_code  # fallback
+    for b in COMMON_BANKS_BY_COUNTRY.get(country, []):
+        if b.code == bank_code:
+            bank_display = b.name
+            break
+
+    _send_whatsapp(
+        from_id,
+        f"✅ Bank selected: {bank_display}\n\n"
+        f"Now send your 10-digit account number:\n"
+        f"Example: 0123456789\n\n"
+        f"(You have 10 minutes before this selection expires.)",
+    )
+    log.info(
+        "pending_bank_selection_set",
+        from_id=from_id,
+        merchant_id=merchant_id,
+        bank_code=bank_code,
+    )
+    return Response(status_code=200)
 
 
 def _route_command(conn, from_id: str, message_text: str, checkout_base: str) -> Response:
@@ -742,6 +902,31 @@ def _route_command(conn, from_id: str, message_text: str, checkout_base: str) ->
             except ParseError as exc:
                 _send_whatsapp(from_id, str(exc))
                 return Response(status_code=200)
+            # If the merchant explicitly typed a country suffix (GHANA/NIGERIA),
+            # parse_register_command already resolved it — register immediately.
+            # If they sent just a name with no suffix, country == "nigeria" as
+            # the default. We still check whether we can send interactive buttons:
+            # if the message text has no country keyword, offer buttons.
+            text_upper = message_text.upper()
+            typed_country_suffix = any(
+                text_upper.rstrip().endswith(suffix)
+                for suffix in (" NIGERIA", " GHANA")
+            )
+            if not typed_country_suffix:
+                # Offer interactive buttons for country selection.
+                sent = send_register_country_buttons(from_id, business_name)
+                if sent:
+                    log.info(
+                        "register_country_buttons_sent",
+                        from_id=from_id,
+                        business_name=business_name,
+                    )
+                    return Response(status_code=200)
+                # Buttons failed — fall through and register as Nigeria (default).
+                log.warning(
+                    "register_country_buttons_fallback",
+                    from_id=from_id,
+                )
             return _handle_register_command(conn, from_id, business_name, country)
         _send_whatsapp(from_id, REGISTRATION_INSTRUCTIONS)
         log.warning("whatsapp_unregistered_sender", from_id=from_id)
@@ -767,9 +952,62 @@ def _route_command(conn, from_id: str, message_text: str, checkout_base: str) ->
     return _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base)
 
 
+def _is_plausible_account_number(text: str) -> bool:
+    """Return True if `text` looks like a bare account number.
+
+    Both Nigerian NUBAN and Ghana bank/mobile-money numbers are exactly
+    10 digits (confirmed from Paystack docs). We accept nothing else here —
+    the check is intentionally tight so we don't misinterpret a short PAY
+    amount or any other message as an account number.
+    """
+    stripped = text.strip()
+    return stripped.isdigit() and len(stripped) == 10
+
+
 def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
-    """Commands available to a merchant who has registered but not onboarded."""
+    """Commands available to a merchant who has registered but not onboarded.
+
+    Extra logic vs the original:
+    1. Bare 'ONBOARD' (no args) → send interactive bank list for the merchant's
+       country, rather than showing a usage error.
+    2. A plausible 10-digit account number → if a pending bank selection is
+       active and unexpired, treat this as completing the tap-then-type flow
+       (bank was tapped earlier, account number arrives now).
+    """
+    # --- Pending bank selection: intercept bare account numbers ---
+    # Check this before command parsing so "0123456789" is never mistaken
+    # for a command keyword by _command_word().
+    if _is_plausible_account_number(message_text):
+        pending = get_pending_bank_selection(conn, merchant_id)
+        if pending is not None:
+            bank_code, _ = pending
+            clear_pending_bank_selection(conn, merchant_id)
+            return _handle_onboard_command(
+                conn, from_id, merchant_id, message_text.strip(), bank_code,
+                bank_code_already_resolved=True,
+            )
+        # No pending selection — fall through to normal command dispatch.
+        # A bare 10-digit number with no context gets the help message.
+
     if cmd == "ONBOARD":
+        # Check if the merchant sent bare ONBOARD (no args) or with args.
+        parts = message_text.strip().split()
+        if len(parts) == 1:
+            # Bare ONBOARD → send the interactive bank list.
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT country FROM merchants WHERE merchant_id = %s",
+                    (merchant_id,),
+                )
+                row = cur.fetchone()
+            country = row[0] if row else "nigeria"
+            sent = send_onboard_bank_list(from_id, country)
+            if not sent:
+                # Interactive send failed — fall back to typed instructions.
+                _send_whatsapp(from_id, FINISH_SETUP_MESSAGE)
+            return Response(status_code=200)
+
+        # ONBOARD with args → typed flow (bank name in args)
         try:
             account_number, bank_name_raw = parse_onboard_command(message_text, "ONBOARD")
         except ParseError as exc:
@@ -782,14 +1020,10 @@ def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
         return Response(status_code=200)
 
     if cmd in LEDGER_COMMANDS:
-        # A merchant who has not finished onboarding has no confirmed sales by
-        # definition — they cannot take a payment yet. Say so, and point at the
-        # step that unblocks them. No DB read is needed to know this.
         _send_whatsapp(from_id, LEDGER_PENDING_MESSAGE)
         return Response(status_code=200)
 
     if cmd == "UPDATE":
-        # No account to change yet — don't spend a Paystack resolve to discover that.
         _send_whatsapp(
             from_id,
             "You don't have a payout account set up yet.\n\n" + FINISH_SETUP_MESSAGE,
@@ -806,24 +1040,6 @@ def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
 
     _send_whatsapp(from_id, PENDING_HELP_MESSAGE)
     return Response(status_code=200)
-
-
-def _merchant_currency(conn, merchant_id: str) -> str:
-    """Return the ISO 4217 currency code for the merchant's country.
-
-    Nigeria -> NGN, Ghana -> GHS.
-    Defaults to NGN for any unrecognised country value so existing merchants
-    are never broken by a missing or unexpected DB value.
-    """
-    _COUNTRY_CURRENCY = {"nigeria": "NGN", "ghana": "GHS"}
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT country FROM merchants WHERE merchant_id = %s",
-            (merchant_id,),
-        )
-        row = cur.fetchone()
-    country = row[0] if row else "nigeria"
-    return _COUNTRY_CURRENCY.get(country, "NGN")
 
 
 def _merchant_currency(conn, merchant_id: str) -> str:
@@ -1048,16 +1264,23 @@ def _handle_register_command(conn, from_id: str, business_name: str, country: st
 
 
 def _handle_onboard_command(
-    conn, from_id: str, merchant_id: str, account_number: str, bank_name_raw: str
+    conn, from_id: str, merchant_id: str, account_number: str, bank_name_raw: str,
+    *,
+    bank_code_already_resolved: bool = False,
 ) -> Response:
     """
     ONBOARD <account_number> <bank name> — first-time payout account setup.
 
-    1. Resolves the typed bank name to a Paystack bank code via the cached
-       bank list for the merchant's country (Nigeria/Ghana).
-    2. Calls Paystack bank/resolve to verify the account number.
-    3. Creates a Paystack subaccount.
-    4. Writes the PayoutAccount row and activates the merchant.
+    Two entry paths:
+    1. Typed: bank_code_already_resolved=False (default). bank_name_raw is the
+       merchant's typed string; resolve_bank_name() looks it up in the bank list.
+    2. Tap: bank_code_already_resolved=True. bank_name_raw IS the bank_code
+       (already resolved from the list tap). Skip name resolution entirely.
+
+    Either way:
+      - Calls Paystack bank/resolve to verify the account number.
+      - Creates a Paystack subaccount.
+      - Writes the PayoutAccount row and activates the merchant.
     """
     from confam.payout_accounts import NoActivePayoutAccount, get_active_payout_account
     from confam.paystack import (
@@ -1084,7 +1307,7 @@ def _handle_onboard_command(
         _send_whatsapp(from_id, RATE_LIMIT_MESSAGE)
         return Response(status_code=200)
 
-    # Get merchant's country to look up the correct bank list.
+    # Get merchant's country and business name.
     with conn.cursor() as cur:
         cur.execute(
             "SELECT country, business_name FROM merchants WHERE merchant_id = %s",
@@ -1094,39 +1317,49 @@ def _handle_onboard_command(
     merchant_country = row[0] if row else "nigeria"
     business_name_db = row[1] if row else None
 
-    # Resolve the typed bank name to a Paystack bank code.
-    try:
-        bank_code, resolved_bank_display = resolve_bank_name(bank_name_raw, merchant_country)
-    except BankNameNotResolved as exc:
-        candidates_text = ""
-        if exc.candidates:
-            names = "\n".join(f"  • {c.name}" for c in exc.candidates[:3])
-            candidates_text = (
-                f"\n\nDid you mean one of these?\n{names}\n\n"
-                f"Send the full name exactly as shown above."
+    if bank_code_already_resolved:
+        # bank_name_raw is actually the bank_code from the tap flow.
+        bank_code = bank_name_raw
+        # Find the display name from the common-bank list for the reply message.
+        resolved_bank_display = bank_code  # fallback
+        for b in COMMON_BANKS_BY_COUNTRY.get(merchant_country, []):
+            if b.code == bank_code:
+                resolved_bank_display = b.name
+                break
+    else:
+        # Typed flow: resolve the bank name to a Paystack bank code.
+        try:
+            bank_code, resolved_bank_display = resolve_bank_name(bank_name_raw, merchant_country)
+        except BankNameNotResolved as exc:
+            candidates_text = ""
+            if exc.candidates:
+                names = "\n".join(f"  • {c.name}" for c in exc.candidates[:3])
+                candidates_text = (
+                    f"\n\nDid you mean one of these?\n{names}\n\n"
+                    f"Send the full name exactly as shown above."
+                )
+            _send_whatsapp(
+                from_id,
+                f"We couldn't find a bank named '{bank_name_raw}'.{candidates_text}\n\n"
+                f"Try: ONBOARD {account_number} <exact bank name>",
             )
-        _send_whatsapp(
-            from_id,
-            f"We couldn't find a bank named '{bank_name_raw}'.{candidates_text}\n\n"
-            f"Try: ONBOARD {account_number} <exact bank name>",
-        )
-        log.warning(
-            "onboard_bank_name_not_resolved",
-            from_id=from_id,
-            merchant_id=merchant_id,
-            bank_name=bank_name_raw,
-            country=merchant_country,
-        )
-        return Response(status_code=200)
-    except PaystackError as exc:
-        _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
-        log.warning(
-            "onboard_bank_list_failed",
-            from_id=from_id,
-            merchant_id=merchant_id,
-            error=str(exc),
-        )
-        return Response(status_code=200)
+            log.warning(
+                "onboard_bank_name_not_resolved",
+                from_id=from_id,
+                merchant_id=merchant_id,
+                bank_name=bank_name_raw,
+                country=merchant_country,
+            )
+            return Response(status_code=200)
+        except PaystackError as exc:
+            _send_whatsapp(from_id, VERIFY_FAILED_MESSAGE)
+            log.warning(
+                "onboard_bank_list_failed",
+                from_id=from_id,
+                merchant_id=merchant_id,
+                error=str(exc),
+            )
+            return Response(status_code=200)
 
     # Verify bank account with Paystack
     try:
