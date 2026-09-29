@@ -42,12 +42,13 @@ services:
         value: INFO
       - key: ENVIRONMENT
         value: production
+
   - type: web
     name: confam-landing
     runtime: static
-    plan: free
-    buildCommand: ""
-    staticPublishPath: ./landing
+    rootDir: ./landing
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./landing/dist
     routes:
       - type: rewrite
         source: /privacy
