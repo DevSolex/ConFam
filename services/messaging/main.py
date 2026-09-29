@@ -36,6 +36,7 @@ import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 import httpx
@@ -45,6 +46,11 @@ from fastapi import APIRouter
 
 from confam.db import close_pool, get_conn
 from confam.links import LinkValidationError, create_link
+from services.messaging.statement import (
+    build_statement_pdf,
+    fetch_ledger_rows,
+    statement_filename,
+)
 
 log = structlog.get_logger()
 
@@ -130,6 +136,93 @@ def _send_whatsapp(to: str, body: str) -> None:
         log.error("whatsapp_send_failed", to=to, error=str(exc))
 
 
+def _meta_credentials() -> tuple[str, str]:
+    """(phone_number_id, access_token) from the environment.
+
+    Rule 8: WHATSAPP_ACCESS_TOKEN is read from environment only, never
+    hardcoded or logged.
+    """
+    return (
+        os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+        os.environ.get("WHATSAPP_ACCESS_TOKEN", ""),
+    )
+
+
+def _upload_document(filename: str, pdf_bytes: bytes) -> str:
+    """Upload the PDF to Meta's media endpoint and return its media_id.
+
+    WhatsApp can only send a document by referencing a media_id that Meta
+    holds, so the file has to be uploaded first, in two steps:
+      POST /{phone_number_id}/media          -> {"id": "<media_id>"}
+      POST /{phone_number_id}/messages       -> {"type": "document", ...}
+
+    The upload must be multipart/form-data with the file part named "file" and
+    mime_type "application/pdf"; a JSON body cannot carry the document.
+
+    Returns the media_id. Raises on any failure or a response without an "id"
+    so the caller can fall back to plain text — a document message with a
+    missing or wrong media_id is silently undeliverable to the merchant.
+    """
+    phone_number_id, access_token = _meta_credentials()
+    if not phone_number_id or not access_token:
+        log.error("whatsapp_credentials_not_set")
+        raise RuntimeError("WhatsApp credentials not set")
+
+    response = httpx.post(
+        f"{META_API_BASE}/{META_API_VERSION}/{phone_number_id}/media",
+        headers={"Authorization": f"Bearer {access_token}"},
+        data={"messaging_product": "whatsapp", "type": "application/pdf"},
+        files={"file": (filename, pdf_bytes, "application/pdf")},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+
+    media_id = response.json().get("id")
+    if not media_id:
+        raise RuntimeError("Meta media upload returned no media_id")
+
+    log.info("whatsapp_media_uploaded", filename=filename, byte_length=len(pdf_bytes))
+    return media_id
+
+
+def _send_document(to: str, media_id: str, filename: str) -> bool:
+    """Send an already-uploaded document to `to` as a WhatsApp message.
+
+    Rule 10: log and continue on failure — a failed document send must never
+    crash the webhook handler that delivered the command.
+
+    Returns True if Meta accepted the message, False otherwise. The caller
+    needs the result to decide whether to fall back to a plain-text reply: the
+    document is only useful to the merchant if the send actually lands.
+    """
+    phone_number_id, access_token = _meta_credentials()
+    if not phone_number_id or not access_token:
+        log.error("whatsapp_credentials_not_set")
+        return False
+
+    try:
+        response = httpx.post(
+            f"{META_API_BASE}/{META_API_VERSION}/{phone_number_id}/messages",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "document",
+                "document": {"id": media_id, "filename": filename},
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        log.info("whatsapp_document_sent", to=to, filename=filename)
+        return True
+    except Exception as exc:
+        log.error("whatsapp_document_send_failed", to=to, error=str(exc))
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Message parsing (unchanged from Twilio version)
 # ---------------------------------------------------------------------------
@@ -145,6 +238,7 @@ USAGE_MESSAGE = (
     "  ONBOARD <account number> <bank code> — set up your payout account\n"
     "  UPDATE <account number> <bank code> — change payout account\n"
     "  PAY <amount in naira> <description> — create a payment link\n"
+    "  LEDGER — get a PDF statement of your confirmed sales\n"
     "  CANCEL — cancel a pending account change\n\n"
     "Example:\n"
     "  PAY 750 Ankara fabric x2"
@@ -197,6 +291,32 @@ PENDING_HELP_MESSAGE = (
     "Send: ONBOARD <account number> <bank code>\n"
     "Example: ONBOARD 0123456789 058\n\n"
     "That's all we need before you can start taking payments."
+)
+
+# LEDGER / STATEMENT — a PDF sales statement, not a bank statement. The
+# wording "confirmed sales" matches what a ledger entry actually proves (the
+# buyer's payment was collected); see OQ-020 and the disclaimer inside the PDF.
+LEDGER_COMMANDS = ("LEDGER", "STATEMENT")
+
+LEDGER_EMPTY_MESSAGE = (
+    "No confirmed sales yet — once you get your first payment, send LEDGER again."
+)
+
+LEDGER_PENDING_MESSAGE = (
+    "You don't have any confirmed sales yet.\n\n" + FINISH_SETUP_MESSAGE
+)
+
+# Sent when the PDF cannot be produced or delivered. Plain text only, no
+# internal error detail, so a Meta outage still leaves the merchant with
+# something actionable rather than silence.
+LEDGER_FALLBACK_MESSAGE = (
+    "Sorry — I couldn't send your statement just now.\n\n"
+    "Please try again in a few minutes. If it keeps failing, contact ConFam support."
+)
+
+LEDGER_RATE_LIMIT_MESSAGE = (
+    "You've requested several statements recently.\n\n"
+    "Please wait a while before asking for another one."
 )
 
 
@@ -268,6 +388,55 @@ def check_resolve_rate_limit(sender_id: str) -> bool:
     if len(window) >= limit:
         log.warning(
             "onboard_rate_limit_exceeded",
+            from_id=sender_id,
+            limit=limit,
+            window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
+        )
+        return True
+
+    window.append(now)
+    return False
+
+
+# LEDGER / STATEMENT gets its own budget on the same in-process sliding window
+# used for onboarding. Sharing _RESOLVE_ATTEMPTS would mean a merchant asking
+# for statements could exhaust their account-verification allowance and lock
+# themselves out of ONBOARD, so the two limits stay separate. Sending a
+# statement costs a Meta media upload, which is metered — this stops a replayed
+# webhook or a bored merchant burning that quota.
+#
+# Set RATE_LIMIT_LEDGER_PER_HOUR=0 to disable, same as the onboard limit.
+
+_LEDGER_ATTEMPTS: dict[str, deque] = {}
+
+
+def _ledger_rate_limit() -> int:
+    try:
+        return int(os.environ.get("RATE_LIMIT_LEDGER_PER_HOUR", "10"))
+    except (ValueError, TypeError):
+        return 10
+
+
+def check_ledger_rate_limit(sender_id: str) -> bool:
+    """Record a statement request. Returns True if over the limit.
+
+    Same semantics as check_resolve_rate_limit: the attempt is recorded even
+    when rejected, so a sender that keeps hammering stays throttled instead of
+    earning a fresh budget on every retry.
+    """
+    limit = _ledger_rate_limit()
+    if limit <= 0:
+        return False  # disabled
+
+    now = time.monotonic()
+    window = _LEDGER_ATTEMPTS.setdefault(sender_id, deque())
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    while window and window[0] < cutoff:
+        window.popleft()
+
+    if len(window) >= limit:
+        log.warning(
+            "ledger_rate_limit_exceeded",
             from_id=sender_id,
             limit=limit,
             window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
@@ -578,6 +747,13 @@ def _route_pending(conn, from_id, merchant_id, message_text, cmd) -> Response:
         _send_whatsapp(from_id, FINISH_SETUP_MESSAGE)
         return Response(status_code=200)
 
+    if cmd in LEDGER_COMMANDS:
+        # A merchant who has not finished onboarding has no confirmed sales by
+        # definition — they cannot take a payment yet. Say so, and point at the
+        # step that unblocks them. No DB read is needed to know this.
+        _send_whatsapp(from_id, LEDGER_PENDING_MESSAGE)
+        return Response(status_code=200)
+
     if cmd == "UPDATE":
         # No account to change yet — don't spend a Paystack resolve to discover that.
         _send_whatsapp(
@@ -617,6 +793,9 @@ def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) 
             return Response(status_code=200)
         return _handle_update_command(conn, from_id, merchant_id, account_number, bank_code)
 
+    if cmd in LEDGER_COMMANDS:
+        return _handle_ledger_command(conn, from_id, merchant_id)
+
     # Parse PAY command
     try:
         amount_minor_units, description = parse_pay_command(message_text)
@@ -655,6 +834,94 @@ def _route_active(conn, from_id, merchant_id, message_text, cmd, checkout_base) 
         amount_minor_units=amount_minor_units,
     )
 
+    return Response(status_code=200)
+
+
+# ---------------------------------------------------------------------------
+# LEDGER / STATEMENT command (merchant sales statement PDF)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_business_name(conn, merchant_id: str) -> str:
+    """Business name for the statement header.
+
+    Scoped by merchant_id, so a statement can never be headed with another
+    merchant's name. An empty string is a valid result — the PDF falls back to
+    "Unnamed business" rather than failing the whole document over a header.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT business_name FROM merchants WHERE merchant_id = %s",
+            (merchant_id,),
+        )
+        row = cur.fetchone()
+    return row[0] if row and row[0] else ""
+
+
+def _handle_ledger_command(conn, from_id: str, merchant_id: str) -> Response:
+    """LEDGER / STATEMENT — send a PDF of the merchant's confirmed sales.
+
+    Delivery is a two-step Meta flow: upload the PDF to /media to get a
+    media_id, then send a document message referencing it. Both steps can
+    fail independently, and either failure leaves the merchant with nothing,
+    so both are answered with a plain-text fallback that tells them to retry
+    (Rule 10).
+
+    Read-only throughout: this handler SELECTs the ledger and sends a
+    document. It never writes a ledger row, and requesting a statement is not
+    recorded anywhere.
+    """
+    if check_ledger_rate_limit(from_id):
+        _send_whatsapp(from_id, LEDGER_RATE_LIMIT_MESSAGE)
+        return Response(status_code=200)
+
+    try:
+        rows, total_count = fetch_ledger_rows(conn, merchant_id)
+    except Exception as exc:
+        log.error("ledger_fetch_failed", merchant_id=merchant_id, error=str(exc))
+        _send_whatsapp(from_id, LEDGER_FALLBACK_MESSAGE)
+        return Response(status_code=200)
+
+    if not rows:
+        log.info("ledger_requested_empty", merchant_id=merchant_id, from_id=from_id)
+        _send_whatsapp(from_id, LEDGER_EMPTY_MESSAGE)
+        return Response(status_code=200)
+
+    generated_at = datetime.now(timezone.utc)
+
+    try:
+        business_name = _fetch_business_name(conn, merchant_id)
+        pdf_bytes = build_statement_pdf(business_name, rows, total_count, generated_at)
+        filename = statement_filename(business_name, generated_at)
+    except Exception as exc:
+        log.error("ledger_pdf_build_failed", merchant_id=merchant_id, error=str(exc))
+        _send_whatsapp(from_id, LEDGER_FALLBACK_MESSAGE)
+        return Response(status_code=200)
+
+    try:
+        media_id = _upload_document(filename, pdf_bytes)
+    except Exception as exc:
+        log.error(
+            "ledger_media_upload_failed",
+            merchant_id=merchant_id,
+            filename=filename,
+            error=str(exc),
+        )
+        _send_whatsapp(from_id, LEDGER_FALLBACK_MESSAGE)
+        return Response(status_code=200)
+
+    if not _send_document(from_id, media_id, filename):
+        _send_whatsapp(from_id, LEDGER_FALLBACK_MESSAGE)
+        return Response(status_code=200)
+
+    log.info(
+        "ledger_statement_sent",
+        merchant_id=merchant_id,
+        filename=filename,
+        rows_rendered=len(rows),
+        total_count=total_count,
+        truncated=total_count > len(rows),
+    )
     return Response(status_code=200)
 
 

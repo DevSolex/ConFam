@@ -30,6 +30,10 @@ dependencies = [
 
     # Cryptographic signing for payment link tokens (Rule 8)
     "itsdangerous==2.2.0",
+
+    # Merchant sales statement PDF for the LEDGER command — pure Python
+    # (fpdf2 core fonts, no Cairo/Pango) so the deploy image stays native-free.
+    "fpdf2==2.8.8",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +43,9 @@ dev = [
     "httpx==0.27.0",
     "ruff==0.5.4",
     "mypy==1.10.1",
+    # Test-only: extract text from rendered statement PDFs so tests assert on
+    # real document content (rows, amounts, running total) rather than bytes.
+    "pypdf==6.19.0",
 ]
 
 [build-system]
