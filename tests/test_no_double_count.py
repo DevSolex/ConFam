@@ -26,11 +26,8 @@ Coverage scope (to be expanded as the settlement engine is implemented):
       settlement engine resumes correctly.
 """
 
-import uuid
-import psycopg2
-import psycopg2.errors
-import pytest
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Database-level constraint: duplicate (rail, rail_reference) is rejected

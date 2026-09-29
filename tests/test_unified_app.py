@@ -14,9 +14,10 @@ Coverage:
 
 import os
 import uuid
-import pytest
+
 import psycopg2
-from httpx import AsyncClient, ASGITransport
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 
 def _make_app(monkeypatch, admin_key="test-admin-key"):
@@ -28,6 +29,7 @@ def _make_app(monkeypatch, admin_key="test-admin-key"):
     monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
     monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
     import importlib
+
     import app as _app
     importlib.reload(_app)
     return _app.app
@@ -41,7 +43,10 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_returns_200_no_key(self, monkeypatch):
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
@@ -55,7 +60,10 @@ class TestAdminKeyMiddleware:
     @pytest.mark.asyncio
     async def test_missing_key_returns_403(self, monkeypatch):
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/links", json={
                 "merchant_id": str(uuid.uuid4()),
                 "amount_minor_units": 1000, "currency": "NGN", "description": "t"
@@ -66,7 +74,10 @@ class TestAdminKeyMiddleware:
     @pytest.mark.asyncio
     async def test_wrong_key_returns_403(self, monkeypatch):
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/links",
                 headers={"X-Admin-Key": "wrong-key"},
                 json={"merchant_id": str(uuid.uuid4()),
@@ -77,7 +88,10 @@ class TestAdminKeyMiddleware:
     @pytest.mark.asyncio
     async def test_correct_key_passes_middleware(self, monkeypatch):
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/links",
                 headers={"X-Admin-Key": "test-admin-key"},
                 json={"merchant_id": str(uuid.uuid4()),
@@ -95,9 +109,14 @@ class TestAdminKeyMiddleware:
         monkeypatch.setenv("PAYMENT_LINK_EXPIRY_SECONDS", "1800")
         monkeypatch.setenv("WHATSAPP_APP_SECRET", "s")
         monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "t")
-        import importlib, app as _app
+        import importlib
+
+        import app as _app
         importlib.reload(_app)
-        async with AsyncClient(transport=ASGITransport(app=_app.app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=_app.app),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/links",
                 headers={"X-Admin-Key": "any-key"},
                 json={"merchant_id": str(uuid.uuid4()),
@@ -115,7 +134,10 @@ class TestPublicRoutes:
     @pytest.mark.asyncio
     async def test_webhook_verify_no_key(self, monkeypatch):
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.get("/webhooks/whatsapp", params={
                 "hub.mode": "subscribe",
                 "hub.verify_token": "test_verify_token",
@@ -127,7 +149,10 @@ class TestPublicRoutes:
     @pytest.mark.asyncio
     async def test_checkout_page_no_key_returns_404_not_403(self, monkeypatch):
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.get(f"/pay/{uuid.uuid4()}/json")
         assert resp.status_code == 404
         assert resp.status_code != 403
@@ -161,7 +186,10 @@ class TestCheckoutPayPrefix:
         conn.commit()
         conn.close()
 
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/links",
                 headers={"X-Admin-Key": "test-admin-key"},
                 json={"merchant_id": merchant_id, "amount_minor_units": 50000,
@@ -176,7 +204,10 @@ class TestCheckoutPayPrefix:
     async def test_all_three_services_respond(self, monkeypatch):
         """Smoke: health, webhook verify, and checkout 404 all return expected codes."""
         application = _make_app(monkeypatch)
-        async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=application),
+            base_url="http://test",
+        ) as client:
             h = await client.get("/health")
             w = await client.get("/webhooks/whatsapp", params={
                 "hub.mode": "subscribe",

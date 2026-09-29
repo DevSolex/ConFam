@@ -10,6 +10,7 @@ See alembic/env.py for rationale on the raw-SQL approach.
 """
 
 from pathlib import Path
+
 from alembic import op
 
 # Revision identifiers used by Alembic.

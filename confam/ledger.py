@@ -19,7 +19,7 @@ Engineering Rule 4: every ledger row carries the full FK traceability chain:
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psycopg2.extensions
 
@@ -138,9 +138,12 @@ def write_correction_entry(
     This function is called by reconciliation processes (OQ-013, future work),
     not by any user-facing or webhook code path.
     """
-    if not isinstance(corrected_amount_minor_units, int) or isinstance(corrected_amount_minor_units, bool):
+    if not isinstance(corrected_amount_minor_units, int) or isinstance(
+        corrected_amount_minor_units, bool
+    ):
         raise TypeError(
-            f"corrected_amount_minor_units must be int (kobo), got {type(corrected_amount_minor_units).__name__}."
+            "corrected_amount_minor_units must be int (kobo), got "
+            f"{type(corrected_amount_minor_units).__name__}."
         )
 
     # Load the original entry to carry forward its FK chain.
@@ -214,12 +217,12 @@ def _row_to_entry(row: tuple) -> LedgerEntry:
         conversion_rate_source=conversion_rate_source,
         confirmed_at=(
             confirmed_at if confirmed_at.tzinfo
-            else confirmed_at.replace(tzinfo=timezone.utc)
+            else confirmed_at.replace(tzinfo=UTC)
         ),
         entry_type=entry_type,
         corrects_entry_id=str(corrects_entry_id) if corrects_entry_id else None,
         created_at=(
             created_at if created_at.tzinfo
-            else created_at.replace(tzinfo=timezone.utc)
+            else created_at.replace(tzinfo=UTC)
         ),
     )

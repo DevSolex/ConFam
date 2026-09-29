@@ -29,13 +29,11 @@ Engineering Rule 8: no signing keys or credentials are hardcoded here.
 Test keypairs are generated ephemerally — never stored.
 """
 
-import os
 from dataclasses import dataclass
 
 import httpx
-from stellar_sdk import Keypair, Network, TransactionEnvelope
-
 import structlog
+from stellar_sdk import Keypair, Network, TransactionEnvelope
 
 log = structlog.get_logger()
 
@@ -167,7 +165,10 @@ def initiate_sep24_withdraw(
     except httpx.TimeoutException as exc:
         raise Sep24Error("SEP-24 withdraw initiation timed out") from exc
     except httpx.HTTPStatusError as exc:
-        raise Sep24Error(f"SEP-24 withdraw failed: {exc.response.status_code} {exc.response.text[:200]}") from exc
+            raise Sep24Error(
+                f"SEP-24 withdraw failed: {exc.response.status_code} "
+                f"{exc.response.text[:200]}"
+            ) from exc
 
     response_type = data.get("type", "")
     interactive_url = data.get("url", "")

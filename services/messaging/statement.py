@@ -25,7 +25,7 @@ wording until OQ-020 is resolved.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fpdf import FPDF
 
@@ -347,7 +347,7 @@ def build_statement_pdf(
         raise ValueError("build_statement_pdf requires at least one row")
 
     if generated_at.tzinfo is None:
-        generated_at = generated_at.replace(tzinfo=timezone.utc)
+        generated_at = generated_at.replace(tzinfo=UTC)
 
     pdf = _StatementPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=_PAGE_MARGIN_MM)

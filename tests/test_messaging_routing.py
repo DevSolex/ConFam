@@ -113,7 +113,7 @@ async def _send(from_id: str, text: str) -> str:
         mock_send.return_value = MagicMock(status_code=200)
         mock_send.return_value.raise_for_status = MagicMock()
         async with AsyncClient(
-            transport=ASGITransport(app=messaging_app), base_url=BASE_URL
+            transport=ASGITransport(app=messaging_app), base_url=BASE_URL  # type: ignore[arg-type]
         ) as client:
             resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
         assert resp.status_code == 200
@@ -269,7 +269,7 @@ ONBOARD_MSG = f"ONBOARD {ACCOUNT_NUMBER} {BANK_CODE}"
 PAY_MSG = "PAY 750 Ankara fabric x2"
 
 # (id, merchant status, command, must_contain, must_not_contain)
-MATRIX = [
+MATRIX: list[tuple[str, str | None, str, list[str], list[str]]] = [
     # -- unknown sender -------------------------------------------------
     ("unknown_greeting", None, "Hi", ["REGISTER"], []),
     ("unknown_pay", None, PAY_MSG, ["REGISTER"], []),

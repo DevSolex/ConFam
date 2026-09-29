@@ -17,8 +17,8 @@ float values; that validation happens in the domain layer before DB writes.
 """
 
 import os
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 import psycopg2
 import psycopg2.pool

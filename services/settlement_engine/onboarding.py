@@ -27,7 +27,7 @@ OQ-025: WhatsApp "reply STOP to cancel" — not built in this task.
   received the notification) is a separate messaging-service feature.
 """
 
-from dataclasses import dataclass
+from datetime import UTC
 
 import psycopg2.errors
 import structlog
@@ -35,15 +35,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from confam.db import get_conn
-from confam.paystack import PaystackError, create_subaccount, resolve_bank_account
 from confam.payout_accounts import (
     NoActivePayoutAccount,
     NoPendingChange,
     PendingChangeAlreadyExists,
     cancel_pending_change,
-    get_pending_change,
     request_payout_account_change,
 )
+from confam.paystack import PaystackError, create_subaccount, resolve_bank_account
 
 log = structlog.get_logger()
 
@@ -72,8 +71,18 @@ class CreateMerchantResponse(BaseModel):
 
 
 class SubmitPayoutAccountRequest(BaseModel):
-    bank_account_number: str = Field(..., min_length=10, max_length=10, description="10-digit NUBAN")
-    bank_code: str = Field(..., min_length=3, max_length=6, description="Paystack bank code (e.g. '058')")
+    bank_account_number: str = Field(
+        ...,
+        min_length=10,
+        max_length=10,
+        description="10-digit NUBAN",
+    )
+    bank_code: str = Field(
+        ...,
+        min_length=3,
+        max_length=6,
+        description="Paystack bank code (e.g. '058')",
+    )
 
 
 class SubmitPayoutAccountResponse(BaseModel):
@@ -136,7 +145,11 @@ def create_merchant(body: CreateMerchantRequest) -> CreateMerchantResponse:
 # POST /merchants/{merchant_id}/payout-account
 # ---------------------------------------------------------------------------
 
-@router.post("/{merchant_id}/payout-account", response_model=SubmitPayoutAccountResponse, status_code=201)
+@router.post(
+    "/{merchant_id}/payout-account",
+    response_model=SubmitPayoutAccountResponse,
+    status_code=201,
+)
 def submit_payout_account(
     merchant_id: str,
     body: SubmitPayoutAccountRequest,
@@ -330,7 +343,11 @@ class RequestChangeResponse(BaseModel):
 # POST /merchants/{merchant_id}/payout-account/change
 # ---------------------------------------------------------------------------
 
-@router.post("/{merchant_id}/payout-account/change", response_model=RequestChangeResponse, status_code=202)
+@router.post(
+    "/{merchant_id}/payout-account/change",
+    response_model=RequestChangeResponse,
+    status_code=202,
+)
 def request_change(
     merchant_id: str,
     body: SubmitPayoutAccountRequest,
@@ -387,7 +404,10 @@ def request_change(
         except NoActivePayoutAccount:
             raise HTTPException(
                 status_code=400,
-                detail="No active payout account found. Use POST /payout-account for first-time setup.",
+                detail=(
+                    "No active payout account found. "
+                    "Use POST /payout-account for first-time setup."
+                ),
             )
         except PendingChangeAlreadyExists:
             raise HTTPException(
@@ -412,9 +432,8 @@ def request_change(
     # Mask account number: show only last 4 digits.
     masked_acct = "*" * (len(body.bank_account_number) - 4) + body.bank_account_number[-4:]
     cooling_off = pending.active_from
-    from datetime import timezone as _tz
     active_from_str = (
-        cooling_off.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M UTC")
+        cooling_off.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
         if cooling_off else "unknown"
     )
 
@@ -430,7 +449,11 @@ def request_change(
         try:
             from services.messaging.main import _send_whatsapp
             _send_whatsapp(confam_thread_id, notification)
-            log.info("payout_change_notification_sent", merchant_id=merchant_id, confam_thread_id=confam_thread_id)
+            log.info(
+                "payout_change_notification_sent",
+                merchant_id=merchant_id,
+                confam_thread_id=confam_thread_id,
+            )
         except Exception as exc:
             # Non-fatal: the change IS pending regardless of notification outcome.
             # But this is a security-critical notification — if the merchant doesn't
@@ -497,7 +520,10 @@ def cancel_change(merchant_id: str) -> dict:
         try:
             cancel_pending_change(conn, merchant_id)
         except NoActivePayoutAccount:
-            raise HTTPException(status_code=404, detail="Merchant not found or has no active account.")
+            raise HTTPException(
+                status_code=404,
+                detail="Merchant not found or has no active account.",
+            )
         except NoPendingChange:
             raise HTTPException(
                 status_code=404,
@@ -505,4 +531,9 @@ def cancel_change(merchant_id: str) -> dict:
             )
 
     log.info("payout_account_change_cancelled", merchant_id=merchant_id)
-    return {"message": "Pending payout account change cancelled. Your existing account remains active."}
+    return {
+        "message": (
+            "Pending payout account change cancelled. "
+            "Your existing account remains active."
+        )
+    }

@@ -111,7 +111,10 @@ class InitiatePaymentRequest(BaseModel):
     def _known_method(cls, value: str) -> str:
         cleaned = value.strip().lower()
         if cleaned not in METHOD_CHANNELS:
-            raise ValueError(f"Unsupported payment method '{value}'. Choose one of: {METHOD_CHOICES}.")
+            raise ValueError(
+                f"Unsupported payment method '{value}'. "
+                f"Choose one of: {METHOD_CHOICES}."
+            )
         return cleaned
 
 

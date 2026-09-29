@@ -893,7 +893,7 @@ async def _post_charge_success(payload: dict) -> int:
     body = json.dumps(payload).encode()
     sig = hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha512).hexdigest()
     async with AsyncClient(
-        transport=ASGITransport(app=engine_app), base_url="http://test"
+        transport=ASGITransport(app=engine_app), base_url="http://test"  # type: ignore[arg-type]
     ) as client:
         resp = await client.post(
             "/webhooks/paystack",

@@ -24,12 +24,12 @@ mid-payment, raise CHECKOUT_RPM before doing anything else.
 import os
 import time
 from collections import defaultdict, deque
-from typing import Callable
+from collections.abc import Callable
 
+import structlog
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-import structlog
 
 log = structlog.get_logger()
 

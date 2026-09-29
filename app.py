@@ -28,14 +28,33 @@ CHECKOUT_BASE_URL must include the /pay prefix on Render:
 import hashlib
 import hmac
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter as _APIRouter
+from fastapi import FastAPI, Request
+from fastapi import HTTPException as _HTTPException
+from fastapi import Request as _Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
-from confam.db import close_pool
+from confam.db import close_pool, get_conn
+from confam.links import LinkValidationError, create_link
+from services.checkout.link_state import router as _status_router
+from services.checkout.main import (
+    CheckoutDetail,
+    _load_and_open,
+    _load_for_page,
+    _render_checkout_page,
+    _render_invalid_page,
+)
+from services.checkout.middleware import RateLimitMiddleware
+from services.checkout.pay import router as _pay_router
+from services.messaging.main import router as messaging_router
+from services.settlement_engine.onboarding import router as onboarding_router
+from services.settlement_engine.reconciliation import run_reconciliation
+from services.settlement_engine.webhook import router as webhook_router
 
 log = structlog.get_logger()
 
@@ -77,7 +96,11 @@ async def admin_key_middleware(request: Request, call_next):
         hashlib.sha256(provided.encode()).digest(),
         hashlib.sha256(admin_key.encode()).digest(),
     ):
-        log.warning("admin_key_rejected", path=path, source_ip=request.client.host if request.client else "unknown")
+        log.warning(
+            "admin_key_rejected",
+            path=path,
+            source_ip=request.client.host if request.client else "unknown",
+        )
         return JSONResponse(
             status_code=403,
             content={"error": "forbidden", "detail": "Invalid or missing X-Admin-Key header."},
@@ -107,7 +130,6 @@ app = FastAPI(
 app.middleware("http")(admin_key_middleware)
 
 # Rate limiting on checkout (already in services/checkout/middleware.py)
-from services.checkout.middleware import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
 
@@ -124,16 +146,7 @@ def health() -> dict:
 # Settlement engine routes
 # ---------------------------------------------------------------------------
 
-from services.settlement_engine.main import app as _engine_app
-
 # Mount routers directly (avoid sub-application mounting which breaks middleware)
-from services.settlement_engine.webhook import router as webhook_router
-from services.settlement_engine.onboarding import router as onboarding_router
-from services.settlement_engine.reconciliation import run_reconciliation
-from confam.db import get_conn
-from confam.links import LinkValidationError, create_link
-from pydantic import BaseModel, Field, field_validator
-
 app.include_router(webhook_router)   # /webhooks/paystack
 app.include_router(onboarding_router)  # /merchants/*
 
@@ -206,19 +219,6 @@ def trigger_reconciliation() -> dict:
 # Checkout routes — mounted under /pay to avoid wildcard collision
 # ---------------------------------------------------------------------------
 
-from fastapi import APIRouter as _APIRouter
-from fastapi import Request as _Request
-from fastapi.responses import HTMLResponse
-
-from services.checkout.main import (
-    CheckoutDetail,
-    _load_and_open,
-    _load_for_page,
-    _render_checkout_page,
-    _render_invalid_page,
-)
-from fastapi import HTTPException as _HTTPException
-
 checkout_router = _APIRouter(prefix="/pay")
 
 
@@ -247,9 +247,6 @@ def get_checkout_page(link_id: str, request: _Request) -> HTMLResponse:
 # checkout_router: the copy-by-path loop that used to live here silently dropped
 # each route's dependencies, tags and name, and would have dropped the new
 # status route too.
-from services.checkout.pay import router as _pay_router
-from services.checkout.link_state import router as _status_router
-
 checkout_router.include_router(_pay_router)
 checkout_router.include_router(_status_router)
 
@@ -259,7 +256,5 @@ app.include_router(checkout_router)
 # ---------------------------------------------------------------------------
 # Messaging routes
 # ---------------------------------------------------------------------------
-
-from services.messaging.main import router as messaging_router
 
 app.include_router(messaging_router)  # /webhooks/whatsapp

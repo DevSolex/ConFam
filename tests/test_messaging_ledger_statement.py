@@ -30,6 +30,7 @@ import io
 import json
 import os
 import uuid
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import psycopg2
@@ -122,7 +123,7 @@ async def _deliver(from_id: str, text: str):
         mock_post.return_value.raise_for_status = MagicMock()
         mock_post.return_value.json.return_value = {"id": TEST_MEDIA_ID}
         async with AsyncClient(
-            transport=ASGITransport(app=messaging_app), base_url=BASE_URL
+            transport=ASGITransport(app=messaging_app), base_url=BASE_URL  # type: ignore[arg-type]
         ) as client:
             resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
         assert resp.status_code == 200
@@ -300,9 +301,9 @@ class TestStatementPdf:
     are asserted on extracted text rather than on bytes."""
 
     def _rows(self):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime(2026, 9, 17, 14, 5, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, 14, 5, tzinfo=UTC)
         return now, [
             st.LedgerRow(now - timedelta(days=2), "Ankara fabric x2",
                           75000, "Confirmed", "sale", "bank"),
@@ -343,9 +344,9 @@ class TestStatementPdf:
 
     def test_running_total_stays_exact_for_awkward_kobo(self):
         """0.01 + 0.01 + 0.01 must be 0.03, not 0.030000000000000002."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         rows = [st.LedgerRow(now, f"Tiny {i}", 1, "Confirmed", "sale", "bank") for i in range(3)]
         text = _pdf_text(st.build_statement_pdf("Shop", rows, 3, now))
         assert "Total confirmed sales: NGN 0.03" in text
@@ -360,9 +361,9 @@ class TestStatementPdf:
         assert "not proof that the money has reached your bank account" in text
 
     def test_correction_row_is_labelled_as_a_correction(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         rows = [
             st.LedgerRow(now, "Refund adjustment", 5000, "Correction", "correction", "bank"),
         ]
@@ -372,19 +373,19 @@ class TestStatementPdf:
     def test_rejects_empty_rows(self):
         """Callers check for an empty ledger first; the renderer must not be
         reachable with nothing to show."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         with pytest.raises(ValueError):
             st.build_statement_pdf(
-                "Shop", [], 0, datetime(2026, 9, 17, tzinfo=timezone.utc)
+                "Shop", [], 0, datetime(2026, 9, 17, tzinfo=UTC)
             )
 
     def test_truncation_note_disclosed_when_history_is_longer(self):
         """The production shape: the cap is full and the merchant has more
         history than fits. The note must name the cap and the true total."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         rows = [
             st.LedgerRow(now - timedelta(seconds=i), f"Item {i}", 1000, "Confirmed", "sale", "bank")
             for i in range(500)
@@ -404,9 +405,9 @@ class TestStatementPdf:
     def test_long_history_paginates_with_repeated_headers(self):
         """A merchant with many sales still gets a readable document: the
         column header repeats on each page and rows are not split."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         rows = [
             st.LedgerRow(now - timedelta(seconds=i), f"Item {i}", 1000, "Confirmed", "sale", "bank")
             for i in range(200)
@@ -420,9 +421,9 @@ class TestStatementPdf:
         """Regression: fpdf2's core fonts are latin-1 only and raise on emoji
         or CJK. A merchant's business name is arbitrary user input, so a
         statement must still render when it contains those characters."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         rows = [
             st.LedgerRow(now, "\U0001f600 \u4f60\u597d \u2014 Ankara",
                           75000, "Confirmed", "sale", "bank"),
@@ -442,18 +443,18 @@ class TestStatementFilename:
     """The filename is uploaded to Meta and shown on the merchant's phone."""
 
     def test_uses_slugified_business_name_and_date(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         expected = "confam-statement-solex-shoes-2026-09-17.pdf"
         assert st.statement_filename("Solex Shoes", now) == expected
 
     def test_is_ascii_and_path_safe_for_odd_business_names(self):
         """A slash, apostrophe, or emoji in a business name must not produce
         a rejected upload or a mangled filename."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         name = st.statement_filename("S\u0142ox \U0001f6cd / Ade's \U0001f600 Store", now)
 
         # Unusable characters collapse to separators; what survives is the
@@ -464,9 +465,9 @@ class TestStatementFilename:
         assert name.endswith(".pdf")
 
     def test_falls_back_when_business_name_has_no_usable_characters(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+        now = datetime(2026, 9, 17, tzinfo=UTC)
         assert st.statement_filename("\U0001f600\U0001f600", now).startswith("confam-statement-")
         assert st.statement_filename("", now) == "confam-statement-business-2026-09-17.pdf"
 

@@ -28,7 +28,7 @@ Only the settlement engine should call these functions.
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 import psycopg2.extensions
 

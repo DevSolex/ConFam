@@ -15,11 +15,9 @@ All tests mock both the Paystack API and Sentry — no real network calls,
 no real alerts sent.
 """
 
-import json
 import os
 import uuid
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
 import psycopg2
 import pytest
@@ -28,7 +26,6 @@ from services.settlement_engine.reconciliation import (
     _reconcile_transaction,
     run_reconciliation,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,7 +63,6 @@ def logged_transaction(migrator_conn) -> dict:
     """
     run_id = uuid.uuid4().hex[:10]
     reference = f"recon-ref-{run_id}"
-    link_id_str = str(uuid.uuid4())
 
     with migrator_conn.cursor() as cur:
         cur.execute(
@@ -79,7 +75,8 @@ def logged_transaction(migrator_conn) -> dict:
         cur.execute(
             "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
             "verification_method, verified_at, active_from, paystack_subaccount_code) "
-            "VALUES (%s, 'enc', 'enc', 'bank_api_resolve', now(), now()-interval'1m', 'ACCT_recon') "
+            "VALUES (%s, 'enc', 'enc', 'bank_api_resolve', now(), "
+            "now()-interval'1m', 'ACCT_recon') "
             "RETURNING payout_account_id",
             (merchant_id,),
         )
@@ -154,8 +151,12 @@ class TestReconcileTransaction:
         unknown_ref = f"missing-{uuid.uuid4().hex[:8]}"
         unknown_link = str(uuid.uuid4())
 
-        with patch("services.settlement_engine.reconciliation._handle_charge_success") as mock_handler, \
-             patch("sentry_sdk.capture_message") as mock_sentry:
+        with (
+            patch(
+                "services.settlement_engine.reconciliation._handle_charge_success"
+            ) as mock_handler,
+            patch("sentry_sdk.capture_message") as mock_sentry,
+        ):
             mock_handler.return_value = None  # success
             result = _reconcile_transaction(
                 conn=db_conn,

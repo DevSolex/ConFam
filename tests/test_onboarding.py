@@ -18,21 +18,20 @@ All DB assertions use confam_app (TEST_DATABASE_URL) to prove OQ-018 grants
 are sufficient for the onboarding write path too.
 """
 
+import hashlib
+import hmac
 import json
 import os
 import uuid
-import hashlib
-import hmac
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import psycopg2
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from confam.paystack import CreatedSubaccount, ResolvedAccount, PaystackError
-from services.settlement_engine.main import app as engine_app
+from confam.paystack import CreatedSubaccount, PaystackError, ResolvedAccount
 from services.checkout.main import app as checkout_app
-
+from services.settlement_engine.main import app as engine_app
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -90,7 +89,10 @@ class TestCreateMerchant:
     async def test_creates_merchant_pending_verification(self, db_conn, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
         phone = f"+234-{uuid.uuid4().hex[:8]}"
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=engine_app),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/merchants", json={
                 "whatsapp_number": phone,
                 "business_name": "Adaeze Fashion Store",
@@ -115,7 +117,10 @@ class TestCreateMerchant:
     async def test_rejects_duplicate_whatsapp_number(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
         phone = f"+234-dup-{uuid.uuid4().hex[:6]}"
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=engine_app),
+            base_url="http://test",
+        ) as client:
             resp1 = await client.post("/merchants", json={
                 "whatsapp_number": phone, "business_name": "First Store",
             })
@@ -144,7 +149,10 @@ class TestSubmitPayoutAccount:
 
         # Create merchant
         phone = f"+234-ob-{uuid.uuid4().hex[:8]}"
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=engine_app),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/merchants", json={
                 "whatsapp_number": phone, "business_name": "Chidi Electronics",
             })
@@ -155,9 +163,20 @@ class TestSubmitPayoutAccount:
             subaccount_code=f"ACCT_test_{uuid.uuid4().hex[:8]}",
             business_name="Chidi Electronics",
         )
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=MOCK_RESOLVED), \
-             patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_subaccount):
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=MOCK_RESOLVED,
+            ),
+            patch(
+                "services.settlement_engine.onboarding.create_subaccount",
+                return_value=mock_subaccount,
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 resp = await client.post(f"/merchants/{merchant_id}/payout-account", json={
                     "bank_account_number": "0123456789",
                     "bank_code": "058",
@@ -197,7 +216,10 @@ class TestSubmitPayoutAccount:
         monkeypatch.setenv("PAYSTACK_SECRET_KEY", "test_key")
 
         phone = f"+234-badrsl-{uuid.uuid4().hex[:8]}"
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=engine_app),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/merchants", json={
                 "whatsapp_number": phone, "business_name": "Bad Account Store",
             })
@@ -207,7 +229,10 @@ class TestSubmitPayoutAccount:
             "services.settlement_engine.onboarding.resolve_bank_account",
             side_effect=PaystackError("422: Account number not found"),
         ):
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 resp = await client.post(f"/merchants/{merchant_id}/payout-account", json={
                     "bank_account_number": "0000000000",
                     "bank_code": "999",
@@ -219,11 +244,16 @@ class TestSubmitPayoutAccount:
         with db_conn.cursor() as cur:
             cur.execute("SELECT status FROM merchants WHERE merchant_id = %s", (merchant_id,))
             assert cur.fetchone()[0] == "pending_verification"
-            cur.execute("SELECT COUNT(*) FROM payout_accounts WHERE merchant_id = %s", (merchant_id,))
+            cur.execute(
+                "SELECT COUNT(*) FROM payout_accounts WHERE merchant_id = %s",
+                (merchant_id,),
+            )
             assert cur.fetchone()[0] == 0
 
     @pytest.mark.asyncio
-    async def test_subaccount_failure_after_resolution_leaves_no_partial_state(self, db_conn, monkeypatch):
+    async def test_subaccount_failure_after_resolution_leaves_no_partial_state(
+        self, db_conn, monkeypatch
+    ):
         """
         If subaccount creation fails after bank resolution, no PayoutAccount
         row is written and merchant stays pending_verification.
@@ -232,18 +262,29 @@ class TestSubmitPayoutAccount:
         monkeypatch.setenv("PAYSTACK_SECRET_KEY", "test_key")
 
         phone = f"+234-subfail-{uuid.uuid4().hex[:8]}"
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=engine_app),
+            base_url="http://test",
+        ) as client:
             resp = await client.post("/merchants", json={
                 "whatsapp_number": phone, "business_name": "Subaccount Fail Store",
             })
         merchant_id = resp.json()["merchant_id"]
 
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=MOCK_RESOLVED), \
-             patch(
-                 "services.settlement_engine.onboarding.create_subaccount",
-                 side_effect=PaystackError("Paystack API error"),
-             ):
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=MOCK_RESOLVED,
+            ),
+            patch(
+                "services.settlement_engine.onboarding.create_subaccount",
+                side_effect=PaystackError("Paystack API error"),
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 resp = await client.post(f"/merchants/{merchant_id}/payout-account", json={
                     "bank_account_number": "0123456789",
                     "bank_code": "058",
@@ -255,7 +296,10 @@ class TestSubmitPayoutAccount:
         with db_conn.cursor() as cur:
             cur.execute("SELECT status FROM merchants WHERE merchant_id = %s", (merchant_id,))
             assert cur.fetchone()[0] == "pending_verification"
-            cur.execute("SELECT COUNT(*) FROM payout_accounts WHERE merchant_id = %s", (merchant_id,))
+            cur.execute(
+                "SELECT COUNT(*) FROM payout_accounts WHERE merchant_id = %s",
+                (merchant_id,),
+            )
             assert cur.fetchone()[0] == 0
 
     @pytest.mark.asyncio
@@ -269,7 +313,10 @@ class TestSubmitPayoutAccount:
         monkeypatch.setenv("PAYSTACK_SECRET_KEY", "test_key")
 
         phone = f"+234-dup2-{uuid.uuid4().hex[:8]}"
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=engine_app),
+            base_url="http://test",
+        ) as client:
             # Create merchant
             resp = await client.post("/merchants", json={
                 "whatsapp_number": phone, "business_name": "Dup Account Store",
@@ -282,16 +329,32 @@ class TestSubmitPayoutAccount:
             )
 
             # First submission — succeeds
-            with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=MOCK_RESOLVED), \
-                 patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_subaccount):
+            with (
+                patch(
+                    "services.settlement_engine.onboarding.resolve_bank_account",
+                    return_value=MOCK_RESOLVED,
+                ),
+                patch(
+                    "services.settlement_engine.onboarding.create_subaccount",
+                    return_value=mock_subaccount,
+                ),
+            ):
                 resp1 = await client.post(f"/merchants/{merchant_id}/payout-account", json={
                     "bank_account_number": "0123456789", "bank_code": "058",
                 })
             assert resp1.status_code == 201
 
             # Second submission — must be rejected
-            with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=MOCK_RESOLVED), \
-                 patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_subaccount):
+            with (
+                patch(
+                    "services.settlement_engine.onboarding.resolve_bank_account",
+                    return_value=MOCK_RESOLVED,
+                ),
+                patch(
+                    "services.settlement_engine.onboarding.create_subaccount",
+                    return_value=mock_subaccount,
+                ),
+            ):
                 resp2 = await client.post(f"/merchants/{merchant_id}/payout-account", json={
                     "bank_account_number": "0123456789", "bank_code": "058",
                 })
@@ -326,8 +389,12 @@ class TestOnboardingEndToEnd:
             business_name="E2E Test Store",
         )
 
-        async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as engine, \
-                   AsyncClient(transport=ASGITransport(app=checkout_app), base_url="http://test") as checkout:
+        async with (
+            AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as engine,
+            AsyncClient(
+                transport=ASGITransport(app=checkout_app), base_url="http://test"
+            ) as checkout,
+        ):
 
             # Step 1: create merchant
             phone = f"+234-e2e-{uuid.uuid4().hex[:8]}"
@@ -338,8 +405,16 @@ class TestOnboardingEndToEnd:
             merchant_id = resp.json()["merchant_id"]
 
             # Step 2: onboard payout account (mocked Paystack)
-            with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=MOCK_RESOLVED), \
-                 patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_subaccount):
+            with (
+                patch(
+                    "services.settlement_engine.onboarding.resolve_bank_account",
+                    return_value=MOCK_RESOLVED,
+                ),
+                patch(
+                    "services.settlement_engine.onboarding.create_subaccount",
+                    return_value=mock_subaccount,
+                ),
+            ):
                 resp = await engine.post(f"/merchants/{merchant_id}/payout-account", json={
                     "bank_account_number": "0123456789", "bank_code": "058",
                 })
@@ -389,7 +464,8 @@ class TestOnboardingEndToEnd:
             assert cur.fetchone()[0] == "logged"
 
             cur.execute(
-                "SELECT amount_minor_units, rail, entry_type FROM ledger_entries WHERE link_id = %s",
+                "SELECT amount_minor_units, rail, entry_type "
+                "FROM ledger_entries WHERE link_id = %s",
                 (link_id,),
             )
             row = cur.fetchone()

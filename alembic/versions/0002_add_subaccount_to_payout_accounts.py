@@ -6,6 +6,7 @@ See db/migrations/008_add_subaccount_to_payout_accounts.sql.
 """
 
 from pathlib import Path
+
 from alembic import op
 
 revision = "0002_add_subaccount"

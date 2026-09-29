@@ -15,20 +15,18 @@ See docs/ARCHITECTURE.md §3.3 and services/settlement-engine/README.md.
 """
 
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 import structlog
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from confam.db import close_pool, get_conn
 from confam.links import LinkValidationError, create_link
-from services.settlement_engine.webhook import router as webhook_router
 from services.settlement_engine.onboarding import router as onboarding_router
 from services.settlement_engine.reconciliation import run_reconciliation
+from services.settlement_engine.webhook import router as webhook_router
 
 log = structlog.get_logger()
 
@@ -70,7 +68,7 @@ class CreateLinkRequest(BaseModel):
 
     @field_validator("amount_minor_units", mode="before")
     @classmethod
-    def reject_floats(cls, v: object) -> int:
+    def reject_floats(cls, v: object) -> object:
         # JSON has no integer/float distinction at the wire level, so 100.0
         # would deserialise as float. Reject any non-integer explicitly.
         # Rule 6: monetary values are exact integers only.

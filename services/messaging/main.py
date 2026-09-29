@@ -35,14 +35,13 @@ import json
 import os
 import time
 from collections import deque
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import AsyncGenerator
+from datetime import UTC, datetime
 
 import httpx
 import structlog
-from fastapi import FastAPI, Request, Response
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI, Request, Response
 
 from confam.db import close_pool, get_conn
 from confam.links import LinkValidationError, create_link
@@ -500,7 +499,10 @@ def parse_register_command(text: str) -> str:
         raise ParseError(USAGE_MESSAGE)
     business_name = parts[1].strip()
     if not business_name:
-        raise ParseError("Please include your business name.\nExample: REGISTER Adaeze Fashion Store")
+        raise ParseError(
+            "Please include your business name.\n"
+            "Example: REGISTER Adaeze Fashion Store"
+        )
     if len(business_name) > 200:
         raise ParseError("Business name must be 200 characters or fewer.")
     return business_name
@@ -887,7 +889,7 @@ def _handle_ledger_command(conn, from_id: str, merchant_id: str) -> Response:
         _send_whatsapp(from_id, LEDGER_EMPTY_MESSAGE)
         return Response(status_code=200)
 
-    generated_at = datetime.now(timezone.utc)
+    generated_at = datetime.now(UTC)
 
     try:
         business_name = _fetch_business_name(conn, merchant_id)
@@ -972,15 +974,20 @@ def _handle_register_command(conn, from_id: str, business_name: str) -> Response
     return Response(status_code=200)
 
 
-def _handle_onboard_command(conn, from_id: str, merchant_id: str, account_number: str, bank_code: str) -> Response:
+def _handle_onboard_command(
+    conn, from_id: str, merchant_id: str, account_number: str, bank_code: str
+) -> Response:
     """
     ONBOARD <account_number> <bank_code> — first-time payout account setup.
     Calls Paystack bank/resolve + create_subaccount in-process.
     """
-    from confam.paystack import (
-        PaystackError, PaystackRateLimited, resolve_bank_account, create_subaccount,
-    )
     from confam.payout_accounts import NoActivePayoutAccount, get_active_payout_account
+    from confam.paystack import (
+        PaystackError,
+        PaystackRateLimited,
+        create_subaccount,
+        resolve_bank_account,
+    )
 
     # A merchant that already onboarded must not get a second account. Routing
     # normally catches this, but re-check here: the status and this command can
@@ -1050,9 +1057,18 @@ def _handle_onboard_command(conn, from_id: str, merchant_id: str, account_number
                     merchant_id, bank_account_number, bank_code, account_holder_name,
                     verification_method, verified_at, active_from, paystack_subaccount_code
                 ) VALUES (%s, %s, %s, %s, 'bank_api_resolve', now(), now(), %s)""",
-                (merchant_id, account_number, bank_code, resolved.account_name, subaccount.subaccount_code),
+                (
+                    merchant_id,
+                    account_number,
+                    bank_code,
+                    resolved.account_name,
+                    subaccount.subaccount_code,
+                ),
             )
-            cur.execute("UPDATE merchants SET status = 'active' WHERE merchant_id = %s", (merchant_id,))
+            cur.execute(
+                "UPDATE merchants SET status = 'active' WHERE merchant_id = %s",
+                (merchant_id,),
+            )
         conn.commit()
     except Exception as exc:
         conn.rollback()
@@ -1081,16 +1097,23 @@ def _handle_onboard_command(conn, from_id: str, merchant_id: str, account_number
     return Response(status_code=200)
 
 
-def _handle_update_command(conn, from_id: str, merchant_id: str, account_number: str, bank_code: str) -> Response:
+def _handle_update_command(
+    conn, from_id: str, merchant_id: str, account_number: str, bank_code: str
+) -> Response:
     """
     UPDATE <account_number> <bank_code> — change payout account with cooling-off.
     Sends immediate notification. Merchant can reply CANCEL to abort.
     """
-    from confam.paystack import (
-        PaystackError, PaystackRateLimited, resolve_bank_account, create_subaccount,
-    )
     from confam.payout_accounts import (
-        NoActivePayoutAccount, PendingChangeAlreadyExists, request_payout_account_change,
+        NoActivePayoutAccount,
+        PendingChangeAlreadyExists,
+        request_payout_account_change,
+    )
+    from confam.paystack import (
+        PaystackError,
+        PaystackRateLimited,
+        create_subaccount,
+        resolve_bank_account,
     )
 
     # UPDATE spends the same Paystack bank/resolve quota as ONBOARD — same limit.
@@ -1131,7 +1154,7 @@ def _handle_update_command(conn, from_id: str, merchant_id: str, account_number:
         return Response(status_code=200)
 
     try:
-        pending = request_payout_account_change(
+        request_payout_account_change(
             conn, merchant_id=merchant_id,
             bank_account_number=account_number, bank_code=bank_code,
             account_holder_name=resolved.account_name,

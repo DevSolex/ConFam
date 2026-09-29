@@ -10,8 +10,10 @@ See OPEN_QUESTIONS.md OQ-018 (resolved) for role design rationale.
 """
 
 import os
-import pytest
+
 import psycopg2
+import pytest
+
 import confam.db as _confam_db
 
 

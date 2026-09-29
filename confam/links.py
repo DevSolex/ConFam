@@ -17,11 +17,9 @@ Engineering rules enforced here:
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Literal
+from datetime import UTC, datetime, timedelta
 
 import psycopg2.extensions
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -57,7 +55,7 @@ class PaymentLink:
 
     @property
     def is_expired(self) -> bool:
-        return datetime.now(timezone.utc) >= self.expires_at
+        return datetime.now(UTC) >= self.expires_at
 
     @property
     def is_terminal(self) -> bool:
@@ -144,7 +142,7 @@ def create_link(
     """
     _validate_create_inputs(merchant_id, amount_minor_units, currency, description.strip())
 
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=_expiry_seconds())
+    expires_at = datetime.now(UTC) + timedelta(seconds=_expiry_seconds())
 
     with conn.cursor() as cur:
         cur.execute(
@@ -236,7 +234,16 @@ def open_link(
 # ---------------------------------------------------------------------------
 
 def _row_to_link(row: tuple) -> PaymentLink:
-    link_id, merchant_id, amount_minor_units, currency, description, status, expires_at, created_at = row
+    (
+        link_id,
+        merchant_id,
+        amount_minor_units,
+        currency,
+        description,
+        status,
+        expires_at,
+        created_at,
+    ) = row
     return PaymentLink(
         link_id=str(link_id),
         merchant_id=str(merchant_id),
@@ -244,6 +251,6 @@ def _row_to_link(row: tuple) -> PaymentLink:
         currency=currency,
         description=description,
         status=status,
-        expires_at=expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc),
-        created_at=created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc),
+        expires_at=expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC),
+        created_at=created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC),
     )

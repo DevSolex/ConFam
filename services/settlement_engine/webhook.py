@@ -16,17 +16,16 @@ See docs/ARCHITECTURE.md §3.3 and confam/paystack.py for the settlement model.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psycopg2.errors
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 
 from confam.db import get_conn
 from confam.ledger import write_ledger_entry
 from confam.payout_accounts import (
     NoActivePayoutAccount,
-    PayoutAccountNotConfiguredForRail,
     get_active_payout_account,
 )
 from confam.paystack import WebhookSignatureInvalid, verify_webhook_signature
@@ -256,7 +255,7 @@ def _handle_charge_success(data: dict) -> None:
                 amount_minor_units=amount_minor_units,
                 currency=currency,
                 rail="bank",
-                confirmed_at=datetime.now(timezone.utc),
+                confirmed_at=datetime.now(UTC),
             )
         except Exception as exc:
             log.error(

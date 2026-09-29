@@ -17,12 +17,13 @@ All DB tests run as confam_app (TEST_DATABASE_URL) with migrator cleanup.
 import os
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, MagicMock
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import psycopg2
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from confam.payout_accounts import (
     NoActivePayoutAccount,
@@ -35,7 +36,6 @@ from confam.payout_accounts import (
 )
 from confam.paystack import CreatedSubaccount, ResolvedAccount
 from services.settlement_engine.main import app as engine_app
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,7 +66,7 @@ def migrator_conn():
 
 
 @pytest.fixture()
-def merchant_with_active_account(migrator_conn, db_conn) -> dict:
+def merchant_with_active_account(migrator_conn, db_conn) -> Iterator[dict]:
     """
     Insert a merchant with an already-active payout account.
     This is the starting state for all change-flow tests.
@@ -127,7 +127,7 @@ class TestPayoutAccountChangeDomain:
                 paystack_subaccount_code="ACCT_new_subaccount",
             )
 
-        assert pending.active_from > datetime.now(timezone.utc)
+        assert pending.active_from > datetime.now(UTC)
 
         # Old account must still be active
         active = get_active_payout_account(db_conn, merchant_id)
@@ -243,7 +243,6 @@ class TestPayoutAccountChangeDomain:
         This test proves the guarantee from migration 011 holds at the database
         level — no application-code invariant, no trust in the caller.
         """
-        merchant_id = merchant_with_active_account["merchant_id"]
         original_payout_id = merchant_with_active_account["original_payout_id"]
 
         # Attempt to delete the active row as confam_app — must be blocked by RLS
@@ -256,8 +255,8 @@ class TestPayoutAccountChangeDomain:
         db_conn.rollback()  # clean up regardless
 
         assert deleted == 0, (
-            f"RLS violation: confam_app deleted an active payout account row. "
-            f"Migration 011 RLS policy should have blocked this DELETE."
+            "RLS violation: confam_app deleted an active payout account row. "
+            "Migration 011 RLS policy should have blocked this DELETE."
         )
 
         # Confirm the row still exists
@@ -267,7 +266,9 @@ class TestPayoutAccountChangeDomain:
                 (original_payout_id,),
             )
             count = cur.fetchone()[0]
-        assert count == 1, "Active payout account row was deleted despite RLS — migration 011 not applied?"
+        assert count == 1, (
+            "Active payout account row was deleted despite RLS — migration 011 not applied?"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -294,12 +295,20 @@ class TestPayoutAccountChangeEndpoints:
         merchant_id = merchant_with_active_account["merchant_id"]
         mock_sub = CreatedSubaccount(subaccount_code="ACCT_new_change", business_name="New")
 
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=self.MOCK_RESOLVED), \
-             patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub), \
-             patch("services.messaging.main.httpx.post") as mock_whatsapp:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=self.MOCK_RESOLVED,
+            ),
+            patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub),
+            patch("services.messaging.main.httpx.post") as mock_whatsapp,
+        ):
             mock_whatsapp.return_value = MagicMock(status_code=200)
             mock_whatsapp.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 resp = await client.post(
                     f"/merchants/{merchant_id}/payout-account/change",
                     json={"bank_account_number": "1234567890", "bank_code": "058"},
@@ -308,9 +317,9 @@ class TestPayoutAccountChangeEndpoints:
         assert resp.status_code == 202
         body = resp.json()
         # active_from must be in the future
-        from datetime import datetime, timezone
+        from datetime import datetime
         active_from = datetime.fromisoformat(body["active_from"])
-        assert active_from > datetime.now(timezone.utc)
+        assert active_from > datetime.now(UTC)
         assert body["cooling_off_seconds"] == 3600
         assert body["paystack_subaccount_code"] == "ACCT_new_change"
 
@@ -329,14 +338,25 @@ class TestPayoutAccountChangeEndpoints:
         monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
 
         merchant_id = merchant_with_active_account["merchant_id"]
-        mock_sub = CreatedSubaccount(subaccount_code=f"ACCT_notif_{uuid.uuid4().hex[:6]}", business_name="New")
+        mock_sub = CreatedSubaccount(
+            subaccount_code=f"ACCT_notif_{uuid.uuid4().hex[:6]}",
+            business_name="New",
+        )
 
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=self.MOCK_RESOLVED), \
-             patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub), \
-             patch("services.messaging.main.httpx.post") as mock_whatsapp:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=self.MOCK_RESOLVED,
+            ),
+            patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub),
+            patch("services.messaging.main.httpx.post") as mock_whatsapp,
+        ):
             mock_whatsapp.return_value = MagicMock(status_code=200)
             mock_whatsapp.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 await client.post(
                     f"/merchants/{merchant_id}/payout-account/change",
                     json={"bank_account_number": "1234567890", "bank_code": "058"},
@@ -366,12 +386,26 @@ class TestPayoutAccountChangeEndpoints:
         monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
 
         merchant_id = merchant_with_active_account["merchant_id"]
-        mock_sub = CreatedSubaccount(subaccount_code=f"ACCT_failnotif_{uuid.uuid4().hex[:6]}", business_name="New")
+        mock_sub = CreatedSubaccount(
+            subaccount_code=f"ACCT_failnotif_{uuid.uuid4().hex[:6]}",
+            business_name="New",
+        )
 
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=self.MOCK_RESOLVED), \
-             patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub), \
-             patch("services.messaging.main.httpx.post", side_effect=Exception("WhatsApp unreachable")):
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=self.MOCK_RESOLVED,
+            ),
+            patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub),
+            patch(
+                "services.messaging.main.httpx.post",
+                side_effect=Exception("WhatsApp unreachable"),
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 resp = await client.post(
                     f"/merchants/{merchant_id}/payout-account/change",
                     json={"bank_account_number": "1234567890", "bank_code": "058"},
@@ -393,14 +427,25 @@ class TestPayoutAccountChangeEndpoints:
         monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
 
         merchant_id = merchant_with_active_account["merchant_id"]
-        mock_sub = CreatedSubaccount(subaccount_code=f"ACCT_tocancel_{uuid.uuid4().hex[:6]}", business_name="New")
+        mock_sub = CreatedSubaccount(
+            subaccount_code=f"ACCT_tocancel_{uuid.uuid4().hex[:6]}",
+            business_name="New",
+        )
 
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=self.MOCK_RESOLVED), \
-             patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub), \
-             patch("services.messaging.main.httpx.post") as mock_whatsapp:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=self.MOCK_RESOLVED,
+            ),
+            patch("services.settlement_engine.onboarding.create_subaccount", return_value=mock_sub),
+            patch("services.messaging.main.httpx.post") as mock_whatsapp,
+        ):
             mock_whatsapp.return_value = MagicMock(status_code=200)
             mock_whatsapp.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 await client.post(
                     f"/merchants/{merchant_id}/payout-account/change",
                     json={"bank_account_number": "1234567890", "bank_code": "058"},
@@ -426,14 +471,28 @@ class TestPayoutAccountChangeEndpoints:
         merchant_id = merchant_with_active_account["merchant_id"]
 
         def make_mock_sub():
-            return CreatedSubaccount(subaccount_code=f"ACCT_{uuid.uuid4().hex[:8]}", business_name="New")
+            return CreatedSubaccount(
+                subaccount_code=f"ACCT_{uuid.uuid4().hex[:8]}",
+                business_name="New",
+            )
 
-        with patch("services.settlement_engine.onboarding.resolve_bank_account", return_value=self.MOCK_RESOLVED), \
-             patch("services.settlement_engine.onboarding.create_subaccount", side_effect=lambda **kw: make_mock_sub()), \
-             patch("services.messaging.main.httpx.post") as mock_whatsapp:
+        with (
+            patch(
+                "services.settlement_engine.onboarding.resolve_bank_account",
+                return_value=self.MOCK_RESOLVED,
+            ),
+            patch(
+                "services.settlement_engine.onboarding.create_subaccount",
+                side_effect=lambda **kw: make_mock_sub(),
+            ),
+            patch("services.messaging.main.httpx.post") as mock_whatsapp,
+        ):
             mock_whatsapp.return_value = MagicMock(status_code=200)
             mock_whatsapp.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=engine_app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=engine_app),
+                base_url="http://test",
+            ) as client:
                 resp1 = await client.post(
                     f"/merchants/{merchant_id}/payout-account/change",
                     json={"bank_account_number": "1234567890", "bank_code": "058"},

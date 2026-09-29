@@ -20,6 +20,7 @@ Why this revision exists:
 """
 
 from pathlib import Path
+
 from alembic import op
 
 revision = "0007_converge_role_grants"

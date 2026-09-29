@@ -25,19 +25,18 @@ Open questions this scaffold does NOT resolve:
 """
 
 import pytest
-from stellar_sdk import Keypair, Network
+from stellar_sdk import Keypair
 
 from rails.stellar.sep24 import (
+    TEST_ANCHOR_AUTH,
+    TEST_ANCHOR_SEP24,
     Sep24Error,
     Sep24TransactionStatus,
     Sep24WithdrawResponse,
-    TEST_ANCHOR_AUTH,
-    TEST_ANCHOR_SEP24,
     get_sep10_jwt,
     initiate_sep24_withdraw,
     poll_sep24_transaction,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -28,7 +28,6 @@ import psycopg2
 import psycopg2.errors
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,7 +43,9 @@ def _insert_test_merchant(conn) -> str:
         return cur.fetchone()[0]
 
 
-def _insert_test_ledger_entry(conn, merchant_id: str, link_id: str, payout_id: str, rail_event_id: str) -> str:
+def _insert_test_ledger_entry(
+    conn, merchant_id: str, link_id: str, payout_id: str, rail_event_id: str
+) -> str:
     """Insert a minimal ledger entry and return its ledger_entry_id."""
     with conn.cursor() as cur:
         cur.execute("""

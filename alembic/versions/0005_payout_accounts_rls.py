@@ -1,6 +1,7 @@
 """Alembic revision 0005: payout_accounts RLS for cancel_pending_change."""
 
 from pathlib import Path
+
 from alembic import op
 
 revision = "0005_payout_accounts_rls"
@@ -8,7 +9,9 @@ down_revision = "0004_payout_account_change_flow"
 branch_labels = None
 depends_on = None
 
-_SQL = Path(__file__).parent.parent.parent / "db" / "migrations" / "011_payout_accounts_rls_cancel.sql"
+_SQL = (
+    Path(__file__).parent.parent.parent / "db" / "migrations" / "011_payout_accounts_rls_cancel.sql"
+)
 
 
 def upgrade() -> None:

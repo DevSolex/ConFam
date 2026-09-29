@@ -28,20 +28,19 @@ import hmac
 import json
 import os
 import uuid
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from collections.abc import Iterator
+from unittest.mock import MagicMock, patch
 
 import psycopg2
 import psycopg2.errors
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from confam.ledger import LedgerWriteError, write_correction_entry, write_ledger_entry
+from confam.ledger import LedgerWriteError, write_correction_entry
 from confam.payout_accounts import NoActivePayoutAccount, get_active_payout_account
 from confam.paystack import WebhookSignatureInvalid, verify_webhook_signature
-from services.settlement_engine.main import app as engine_app
 from services.checkout.main import app as checkout_app
-
+from services.settlement_engine.main import app as engine_app
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -74,7 +73,7 @@ def migrator_conn():
 
 
 @pytest.fixture()
-def test_merchant(migrator_conn) -> dict:
+def test_merchant(migrator_conn) -> Iterator[dict]:
     """
     Insert a test merchant, yield its IDs, clean up after.
 
@@ -168,7 +167,9 @@ def test_payment_link(db_conn, test_merchant) -> dict:
     return {"link_id": link_id, "merchant_id": merchant_id, "amount_minor_units": 50000}
 
 
-def _make_charge_success_payload(link_id: str, reference: str, subaccount_code: str, amount: int = 50000) -> dict:
+def _make_charge_success_payload(
+    link_id: str, reference: str, subaccount_code: str, amount: int = 50000
+) -> dict:
     """Build a minimal charge.success Paystack webhook payload."""
     return {
         "event": "charge.success",
@@ -356,7 +357,7 @@ class TestInitiateBankPayment:
 class TestChargeSuccessWebhook:
     TEST_SECRET = "test_paystack_webhook_secret"
 
-    def _post_webhook(self, payload_dict: dict, secret: str = None):
+    def _post_webhook(self, payload_dict: dict, secret: str | None = None):
         """Post a signed webhook to the settlement engine via ASGI transport."""
         secret = secret or self.TEST_SECRET
         payload_bytes = json.dumps(payload_dict).encode()
@@ -701,7 +702,8 @@ class TestCorrectionEntry:
         # Verify original row is unmodified
         with db_conn.cursor() as cur:
             cur.execute(
-                "SELECT amount_minor_units, entry_type FROM ledger_entries WHERE ledger_entry_id = %s",
+                "SELECT amount_minor_units, entry_type "
+                "FROM ledger_entries WHERE ledger_entry_id = %s",
                 (original_id,),
             )
             orig_amount, orig_type = cur.fetchone()

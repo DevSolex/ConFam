@@ -30,15 +30,14 @@ not a background job failure to be silently retried."
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 import httpx
 import sentry_sdk
 import structlog
 
 from confam.db import get_conn
-from confam.ledger import write_ledger_entry
-from confam.payout_accounts import NoActivePayoutAccount, get_active_payout_account
 from services.settlement_engine.webhook import _handle_charge_success
 
 log = structlog.get_logger()
@@ -75,7 +74,13 @@ def run_reconciliation() -> dict:
       }
     """
     log.info("reconciliation_started", lookback_minutes=LOOKBACK_MINUTES)
-    summary = {"checked": 0, "already_logged": 0, "recovered": 0, "incidents": 0, "errors": []}
+    summary: dict[str, Any] = {
+        "checked": 0,
+        "already_logged": 0,
+        "recovered": 0,
+        "incidents": 0,
+        "errors": [],
+    }
 
     # Step 1: fetch recent successful transactions from Paystack
     try:
@@ -145,7 +150,7 @@ def run_reconciliation() -> dict:
 
 def _fetch_paystack_transactions(since_minutes: int) -> list[dict]:
     """Fetch successful transactions from Paystack for the past N minutes."""
-    from_dt = (datetime.now(timezone.utc) - timedelta(minutes=since_minutes)).strftime(
+    from_dt = (datetime.now(UTC) - timedelta(minutes=since_minutes)).strftime(
         "%Y-%m-%dT%H:%M:%S"
     )
     resp = httpx.get(
@@ -188,7 +193,8 @@ def _reconcile_transaction(
             # RailEvent exists and processed — check LedgerEntry exists too
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT COUNT(*) FROM ledger_entries WHERE rail_event_id = %s AND entry_type = 'sale'",
+                    "SELECT COUNT(*) FROM ledger_entries "
+                    "WHERE rail_event_id = %s AND entry_type = 'sale'",
                     (rail_event_id,),
                 )
                 count = cur.fetchone()[0]
@@ -254,7 +260,9 @@ def _attempt_recovery(
         return "incident"
 
 
-def _raise_incident(message: str, level: str = "error") -> None:
+def _raise_incident(
+    message: str, level: Literal["fatal", "critical", "error", "warning", "info", "debug"] = "error"
+) -> None:
     """Log and raise a Sentry incident. Rule 7: mismatches are incidents, not silent retries."""
     log.error("reconciliation_incident", message=message)
     sentry_sdk.capture_message(message, level=level)

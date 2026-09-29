@@ -20,8 +20,8 @@ See docs/ARCHITECTURE.md §3.2 and services/checkout/README.md.
 """
 
 import json
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
@@ -32,6 +32,7 @@ from confam.db import close_pool, get_conn
 from confam.links import open_link
 from services.checkout.link_state import buyer_state, merchant_name_for
 from services.checkout.link_state import router as status_router
+from services.checkout.middleware import RateLimitMiddleware
 from services.checkout.pay import router as pay_router
 
 log = structlog.get_logger()
@@ -56,7 +57,6 @@ app.include_router(pay_router)
 app.include_router(status_router)
 
 # Rate limiting — in-process sliding window (production: replace with Redis/WAF)
-from services.checkout.middleware import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
 
@@ -306,7 +306,9 @@ def _render_checkout_page(
       border: 1px solid #cfd4dc; border-radius: 10px; margin-bottom: 20px;
       background: #fff; color: inherit;
     }}
-    input[type=email]:focus {{ outline: 2px solid #1a56db; outline-offset: 1px; border-color: #1a56db; }}
+    input[type=email]:focus {{
+      outline: 2px solid #1a56db; outline-offset: 1px; border-color: #1a56db;
+    }}
     input[type=email]:disabled {{ background: #f3f4f6; }}
     .btn {{
       display: block; width: 100%; padding: 15px; margin-bottom: 12px;
@@ -455,7 +457,8 @@ def _render_checkout_page(
       }},
       logged: {{
         title: "Payment received",
-        message: "Thank you! The merchant has been notified and your receipt is on its way by email."
+        message: "Thank you! The merchant has been notified and your receipt "
+                 + "is on its way by email."
       }},
       failed: {{
         title: "Payment did not go through",
@@ -463,7 +466,8 @@ def _render_checkout_page(
       }},
       expired: {{
         title: "This link has expired",
-        message: "Ask the merchant for a new payment link. If you were charged, contact them — they can confirm it."
+        message: "Ask the merchant for a new payment link. If you were charged, "
+                 + "contact them — they can confirm it."
       }}
     }};
 

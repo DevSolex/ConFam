@@ -16,23 +16,23 @@ Coverage:
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 
 import psycopg2
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from confam.links import (
     LinkValidationError,
     PaymentLink,
+    _validate_create_inputs,
     create_link,
     get_link,
     open_link,
-    _validate_create_inputs,
 )
-from services.settlement_engine.main import app as engine_app
 from services.checkout.main import app as checkout_app
-
+from services.settlement_engine.main import app as engine_app
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -78,7 +78,7 @@ def migrator_conn():
 
 
 @pytest.fixture()
-def test_merchant_id(db_conn, migrator_conn) -> str:
+def test_merchant_id(db_conn, migrator_conn) -> Iterator[str]:
     """
     Insert a minimal merchant row via confam_app and return its merchant_id.
     Teardown removes the test data via migrator_conn (confam_app has no DELETE).
@@ -194,16 +194,16 @@ class TestCreateLink:
         assert link.currency == "NGN"
         assert link.description == "Bag of rice"
         assert link.status == "created"
-        assert link.expires_at > datetime.now(timezone.utc)
+        assert link.expires_at > datetime.now(UTC)
 
     def test_link_id_is_valid_uuid(self, db_conn, test_merchant_id):
         link = create_link(db_conn, test_merchant_id, 500, "NGN", "item")
         uuid.UUID(link.link_id)  # raises ValueError if not a valid UUID
 
     def test_expiry_is_approximately_30_minutes(self, db_conn, test_merchant_id):
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         link = create_link(db_conn, test_merchant_id, 500, "NGN", "item")
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         lower = before + timedelta(seconds=1799)
         upper = after + timedelta(seconds=1801)
         assert lower <= link.expires_at <= upper

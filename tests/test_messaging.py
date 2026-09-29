@@ -27,21 +27,22 @@ import hmac
 import json
 import os
 import uuid
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import psycopg2
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from services.messaging.main import (
-    app as messaging_app,
-    parse_pay_command,
     ParseError,
-    send_payment_confirmed_notification,
-    USAGE_MESSAGE,
     _verify_meta_signature,
+    parse_pay_command,
+    send_payment_confirmed_notification,
 )
-
+from services.messaging.main import (
+    app as messaging_app,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -101,7 +102,7 @@ def _meta_payload(from_id: str, message_text: str) -> bytes:
 
 
 @pytest.fixture()
-def test_merchant(migrator_conn, db_conn) -> dict:
+def test_merchant(migrator_conn, db_conn) -> Iterator[dict]:
     """
     Insert a test merchant with a unique confam_thread_id in Meta bare-digit format.
     Returns merchant_id and from_id (bare digits, no prefix).
@@ -217,7 +218,10 @@ class TestVerifyTokenHandshake:
     @pytest.mark.asyncio
     async def test_correct_token_echoes_challenge(self, monkeypatch):
         monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", TEST_VERIFY_TOKEN)
-        async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=messaging_app),
+            base_url=self.BASE_URL,
+        ) as client:
             resp = await client.get("/webhooks/whatsapp", params={
                 "hub.mode": "subscribe",
                 "hub.verify_token": TEST_VERIFY_TOKEN,
@@ -229,7 +233,10 @@ class TestVerifyTokenHandshake:
     @pytest.mark.asyncio
     async def test_wrong_token_returns_403(self, monkeypatch):
         monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", TEST_VERIFY_TOKEN)
-        async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=messaging_app),
+            base_url=self.BASE_URL,
+        ) as client:
             resp = await client.get("/webhooks/whatsapp", params={
                 "hub.mode": "subscribe",
                 "hub.verify_token": "wrong_token",
@@ -242,7 +249,10 @@ class TestVerifyTokenHandshake:
     @pytest.mark.asyncio
     async def test_missing_mode_returns_403(self, monkeypatch):
         monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", TEST_VERIFY_TOKEN)
-        async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=messaging_app),
+            base_url=self.BASE_URL,
+        ) as client:
             resp = await client.get("/webhooks/whatsapp", params={
                 "hub.verify_token": TEST_VERIFY_TOKEN,
                 "hub.challenge": "challenge_abc_123",
@@ -268,11 +278,17 @@ class TestWhatsAppWebhook:
         monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
 
         payload = _meta_payload("2349999999999", "PAY 500 Test")
-        async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=messaging_app),
+            base_url=self.BASE_URL,
+        ) as client:
             resp = await client.post(
                 "/webhooks/whatsapp",
                 content=payload,
-                headers={"X-Hub-Signature-256": "sha256=badsig", "Content-Type": "application/json"},
+                headers={
+                    "X-Hub-Signature-256": "sha256=badsig",
+                    "Content-Type": "application/json",
+                },
             )
         # Returns 200 (suppress retries) but does nothing
         assert resp.status_code == 200
@@ -291,7 +307,10 @@ class TestWhatsAppWebhook:
         with patch("services.messaging.main.httpx.post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app),
+                base_url=self.BASE_URL,
+            ) as client:
                 resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
 
         assert resp.status_code == 200
@@ -313,7 +332,10 @@ class TestWhatsAppWebhook:
         with patch("services.messaging.main.httpx.post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app),
+                base_url=self.BASE_URL,
+            ) as client:
                 resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
 
         assert resp.status_code == 200
@@ -338,7 +360,10 @@ class TestWhatsAppWebhook:
         with patch("services.messaging.main.httpx.post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app),
+                base_url=self.BASE_URL,
+            ) as client:
                 resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
 
         assert resp.status_code == 200
@@ -371,11 +396,20 @@ class TestWhatsAppWebhook:
         monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
 
         payload = json.dumps({
-            "entry": [{"changes": [{"value": {"messages": [{"from": "2348000000001", "type": "image"}]}}]}]
+            "entry": [
+                {
+                    "changes": [
+                        {"value": {"messages": [{"from": "2348000000001", "type": "image"}]}}
+                    ]
+                }
+            ]
         }).encode()
         headers = self._signed_post(payload)
 
-        async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=messaging_app),
+            base_url=self.BASE_URL,
+        ) as client:
             resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
         assert resp.status_code == 200
 
@@ -394,133 +428,9 @@ class TestCancelCommand:
     BASE_URL = "http://test"
 
     def _signed_post(self, from_id: str, text: str, secret: str) -> tuple[bytes, dict]:
-        import hashlib, hmac, json
-        payload = json.dumps({
-            "entry": [{"changes": [{"value": {"messages": [
-                {"from": from_id, "type": "text", "text": {"body": text}}
-            ]}}]}]
-        }).encode()
-        sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return payload, {"X-Hub-Signature-256": sig, "Content-Type": "application/json"}
-
-    @pytest.mark.asyncio
-    async def test_cancel_with_pending_change_succeeds(
-        self, test_merchant, migrator_conn, monkeypatch
-    ):
-        """CANCEL when a pending change exists — cancels it and confirms."""
-        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
-        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
-        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
-        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
-        monkeypatch.setenv("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "3600")
-
-        from_id = test_merchant["from_id"]
-        merchant_id = test_merchant["merchant_id"]
-
-        # Insert a pending payout account change
-        with migrator_conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
-                "account_holder_name, verification_method, verified_at, active_from, "
-                "paystack_subaccount_code, change_requested_at) "
-                "VALUES (%s, 'enc', 'enc', 'Name', 'bank_api_resolve', now(), "
-                "now() + interval '3600 seconds', 'ACCT_pending', now()) "
-                "RETURNING payout_account_id",
-                (merchant_id,),
-            )
-        migrator_conn.commit()
-
-        payload, headers = self._signed_post(from_id, "CANCEL", "test_secret")
-
-        with patch("services.messaging.main.httpx.post") as mock_send:
-            mock_send.return_value = MagicMock(status_code=200)
-            mock_send.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(
-                transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL
-            ) as client:
-                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
-
-        assert resp.status_code == 200
-        mock_send.assert_called_once()
-        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
-        assert "cancelled" in sent_body.lower()
-
-    @pytest.mark.asyncio
-    async def test_stop_command_also_cancels(self, test_merchant, migrator_conn, monkeypatch):
-        """STOP is synonymous with CANCEL."""
-        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
-        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
-        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
-        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
-        monkeypatch.setenv("PAYOUT_ACCOUNT_COOLING_OFF_SECONDS", "3600")
-
-        from_id = test_merchant["from_id"]
-        merchant_id = test_merchant["merchant_id"]
-
-        with migrator_conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO payout_accounts (merchant_id, bank_account_number, bank_code, "
-                "account_holder_name, verification_method, verified_at, active_from, "
-                "paystack_subaccount_code, change_requested_at) "
-                "VALUES (%s, 'enc', 'enc', 'Name', 'bank_api_resolve', now(), "
-                "now() + interval '3600 seconds', 'ACCT_stop_test', now())",
-                (merchant_id,),
-            )
-        migrator_conn.commit()
-
-        payload, headers = self._signed_post(from_id, "STOP", "test_secret")
-
-        with patch("services.messaging.main.httpx.post") as mock_send:
-            mock_send.return_value = MagicMock(status_code=200)
-            mock_send.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(
-                transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL
-            ) as client:
-                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
-
-        assert resp.status_code == 200
-        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
-        assert "cancelled" in sent_body.lower()
-
-    @pytest.mark.asyncio
-    async def test_cancel_with_no_pending_change_informs_merchant(
-        self, test_merchant, monkeypatch
-    ):
-        """CANCEL when nothing is pending — polite message, no error."""
-        monkeypatch.setenv("WHATSAPP_APP_SECRET", "test_secret")
-        monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
-        monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token")
-        monkeypatch.setenv("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", ""))
-
-        from_id = test_merchant["from_id"]
-        payload, headers = self._signed_post(from_id, "CANCEL", "test_secret")
-
-        with patch("services.messaging.main.httpx.post") as mock_send:
-            mock_send.return_value = MagicMock(status_code=200)
-            mock_send.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(
-                transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL
-            ) as client:
-                resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
-
-        assert resp.status_code == 200
-        sent_body = mock_send.call_args.kwargs["json"]["text"]["body"]
-        # Merchant told there's nothing to cancel — not an error message
-        assert "don\'t have a pending" in sent_body.lower() or "no pending" in sent_body.lower() or "don" in sent_body.lower()
-
-
-
-
-# ---------------------------------------------------------------------------
-# CANCEL / STOP command (OQ-025)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.integration
-class TestCancelCommand:
-    BASE_URL = "http://test"
-
-    def _signed_post(self, from_id: str, text: str, secret: str) -> tuple[bytes, dict]:
-        import hashlib, hmac as _hmac, json
+        import hashlib
+        import hmac as _hmac
+        import json
         payload = json.dumps({
             "entry": [{"changes": [{"value": {"messages": [
                 {"from": from_id, "type": "text", "text": {"body": text}}
@@ -558,7 +468,10 @@ class TestCancelCommand:
         with patch("services.messaging.main.httpx.post") as mock_send:
             mock_send.return_value = MagicMock(status_code=200)
             mock_send.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app),
+                base_url=self.BASE_URL,
+            ) as client:
                 resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
 
         assert resp.status_code == 200
@@ -595,7 +508,10 @@ class TestCancelCommand:
         with patch("services.messaging.main.httpx.post") as mock_send:
             mock_send.return_value = MagicMock(status_code=200)
             mock_send.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app),
+                base_url=self.BASE_URL,
+            ) as client:
                 resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
 
         assert resp.status_code == 200
@@ -616,7 +532,10 @@ class TestCancelCommand:
         with patch("services.messaging.main.httpx.post") as mock_send:
             mock_send.return_value = MagicMock(status_code=200)
             mock_send.return_value.raise_for_status = MagicMock()
-            async with AsyncClient(transport=ASGITransport(app=messaging_app), base_url=self.BASE_URL) as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=messaging_app),
+                base_url=self.BASE_URL,
+            ) as client:
                 resp = await client.post("/webhooks/whatsapp", content=payload, headers=headers)
 
         assert resp.status_code == 200
