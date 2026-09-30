@@ -4,55 +4,95 @@
 
 > "We are not digitising them — we are giving them a balance sheet."
 
-This repository (and this documentation set) exists to **ground** ConFam before a single line of production code is written. It is the shared source of truth for what ConFam is, what it is not, how its pieces fit together, and which rules are non-negotiable. Nothing here is the product itself — it is the contract the team is building against.
+---
 
-## 1. The problem
+## What it does
 
-Merchants in Nigeria (and similar markets) sell almost entirely through chat apps — 67% of Nigerian online purchases start in a chat thread, and Nigeria is the #1 country globally for WhatsApp Business commerce. That commerce is invisible to the formal economy:
+Merchants in Nigeria and Ghana sell through WhatsApp every day. ConFam inserts itself at the one moment that breaks the flow: payment collection. The merchant types `PAY 2500 Jordan` in a separate ConFam WhatsApp thread, gets a one-time link back, pastes it to the buyer, and receives a "Payment received ✅" notification the moment Paystack confirms the transfer. Every sale lands permanently in a naira (or GHS) ledger — the underwriting file for future working-capital lending.
 
-- **No real payments** — buyers send screenshots of bank transfers as "proof"; sellers manually reconcile against their banking app; fake screenshots slip through.
-- **No records** — a $2B+ market runs with no structured trade history.
-- **No credit** — with no sales record, merchants have nothing a lender can underwrite against.
+ConFam never holds funds. Every payment routes to the merchant's own pre-verified bank account or mobile money number.
 
-## 2. The solution, in one paragraph
+---
 
-A merchant keeps selling exactly as they already do, in a normal WhatsApp conversation with a buyer. When it's time to collect payment, the merchant opens a **separate ConFam thread**, enters the transaction details, and receives a one-time payment link. That link — not a new app, not a new account for the buyer — is what gets shared back into the original buyer conversation. The buyer pays via bank transfer or a self-custody stablecoin wallet (Lobstr on Stellar). ConFam never custodies funds; it confirms the payment, pays the merchant's own whitelisted bank account, notifies the merchant, and writes an immutable row to a naira-denominated ledger. That ledger — not the payment itself — is the long-term asset: it becomes the underwriting file for working-capital lending later.
+## Non-negotiable principles
 
-See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the full system breakdown.
+1. **Zero-custody in code, not policy.** A payout can only ever land on a pre-verified, whitelisted account. The capability to redirect a payout elsewhere does not exist in the codebase.
+2. **The ledger is append-only and is the product.** Nothing written is ever edited or deleted. It is the asset the entire business model is built on.
+3. **No behaviour change for either side.** Merchants keep selling on WhatsApp. ConFam inserts itself only at payment.
+4. **Every transaction is traceable end-to-end** — from the WhatsApp message to the ledger row.
 
-## 3. Core, non-negotiable principles
+The full rules are in `.kiro/steering/engineering_rules.md` (11 rules, all strict).
 
-These are elaborated with full rationale in [`docs/ENGINEERING_RULES.md`](./docs/ENGINEERING_RULES.md), but they are stated here because everything else in this repo is downstream of them:
+---
 
-1. **Zero-custody is enforced in code, not policy.** ConFam is never a valid resting place for a naira or a dollar. A payout can only ever land on a merchant's pre-verified, whitelisted account.
-2. **The ledger is append-only and is the product.** Nothing that has been written to it is ever edited or deleted. It is the asset the entire business model (fees → subscription → credit) is built on top of.
-3. **No behavior change for either side.** Merchants and buyers keep using WhatsApp exactly as they already do. ConFam inserts itself only at the moment of payment.
-4. **Every transaction must be traceable end-to-end**, from the chat message that triggered it to the ledger row it produced.
+## Current status
 
-## 4. Documentation map
+Live on Render: **https://confam-xq4m.onrender.com**  
+Landing page: **https://con-fam.vercel.app**
 
-| Doc | Purpose |
-|---|---|
-| [`README.md`](./README.md) | This file — orientation and non-negotiables |
-| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | System components, the two-thread model, end-to-end flow |
-| [`docs/TECH_STACK.md`](./docs/TECH_STACK.md) | Technologies, confirmed vs. proposed, and why |
-| [`docs/ENGINEERING_RULES.md`](./docs/ENGINEERING_RULES.md) | Strict rules every contributor and every PR must follow |
-| [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md) | Core entities, schema, and the transaction state machine |
-| [`docs/COMPLIANCE_SECURITY.md`](./docs/COMPLIANCE_SECURITY.md) | Licensing, data protection, KYC/KYB, and messaging-policy constraints |
-| [`CONTRIBUTING.md`](./CONTRIBUTING.md) | PR checklist derived from the 11 engineering rules |
-| [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) | Every [Proposed] item that must be decided before feature work begins |
-| [`RUNNING.md`](./RUNNING.md) | How to start the stack, run tests, and manually smoke-test the payment link flow |
+**Built and passing:**
+- WhatsApp command flow: `REGISTER`, `ONBOARD`, `PAY`, `LEDGER`, `UPDATE`, `CANCEL`
+- Interactive tap-to-select: REGISTER sends country buttons (Nigeria/Ghana), bare ONBOARD sends tappable bank list
+- Bank-name fuzzy matching (`resolve_bank_name`) + 1-hour cached bank list per country
+- Ghana support: GHS currency, mobile money (MTN MoMo, AirtelTigo, Vodafone Cash) in bank list
+- Paystack bank rail: link creation → checkout → webhook → ledger write (~2ms)
+- Append-only ledger with no-double-count guarantee (50+ transaction test)
+- Payout account change flow with 48h cooling-off and instant WhatsApp notification
+- PDF sales statement (`LEDGER` command)
+- 100+ automated tests passing
 
-## 5. What "grounded" means here
+**Countries supported:** Nigeria (NGN), Ghana (GHS)  
+**Payment rails:** Paystack (bank transfer / card). Stellar/Lobstr in design.
 
-This documentation set intentionally separates three categories of claim, and every doc in this set keeps that separation explicit:
+---
 
-- **Confirmed** — stated directly in ConFam's pitch materials or existing test suite (e.g., Postgres as the ledger store, Stellar + Lobstr as the crypto rail, 0.5–1% transaction fee).
-- **Decided in grounding** — resolved during this documentation pass and now treated as binding unless revisited on purpose (e.g., the two-WhatsApp-thread model, link-based payment requests).
-- **Proposed default** — a reasonable engineering choice made to unblock grounding, flagged as needing explicit team sign-off before implementation (e.g., specific backend language/framework, specific bank aggregator).
+## Repository layout
 
-Anything marked **proposed default** should be treated as a placeholder, not a decision. Do not build against it without converting it to "decided" first.
+```
+app.py                        — unified ASGI entrypoint (single Render service)
+confam/
+  paystack.py                 — Paystack API client, bank-name resolver, list cache
+  interactive.py              — WhatsApp interactive messages, common-bank config
+  ledger.py                   — append-only ledger writes
+  links.py                    — payment link creation and signing
+  payout_accounts.py          — payout account whitelist and cooling-off logic
+  db.py                       — connection pool
+services/
+  messaging/main.py           — WhatsApp webhook handler and command router
+  messaging/statement.py      — PDF ledger statement (LEDGER command)
+  settlement_engine/
+    webhook.py                — Paystack webhook handler
+    onboarding.py             — merchant + payout account REST API
+    reconciliation.py         — scheduled reconciliation job
+  checkout/                   — buyer-facing checkout page
+rails/
+  stellar/                    — Stellar/SEP-24 scaffold (not yet live)
+  bank/                       — Paystack adapter
+db/migrations/                — plain SQL migrations (001–015)
+alembic/versions/             — Alembic wrappers
+tests/                        — pytest suite
+landing/                      — React/Vite marketing site (Vercel)
+```
 
-## 6. Status
+---
 
-Pre-revenue. Per existing project traction: the core loop (WhatsApp → payment → auto-confirm → receipt → ledger) is built as a single codebase across two settlement rails, with 49 automated tests passing (including a live-Postgres test and a 50+ transaction no-double-count test) and ~2ms confirmation-to-ledger latency. This documentation set formalizes the rules that existing and future code must continue to satisfy.
+## Running locally
+
+See `RUNNING.md` for the full local setup, Docker commands, and manual smoke test.
+
+Quick start:
+```bash
+cp .env.example .env   # fill in passwords
+docker compose up --build
+curl http://localhost:8001/health
+```
+
+---
+
+## Deployment
+
+See `DEPLOYMENT.md`. The app auto-deploys to Render on every push to `main`.
+
+```bash
+git push origin main
+```

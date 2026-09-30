@@ -1,64 +1,161 @@
-# Tester Guide — Paystack Checkout
+# Tester Guide — ConFam WhatsApp + Checkout Flow
 
-This guide walks a tester through the buyer-facing checkout flow and webhook payment handling. It is the manual companion to `tests/test_checkout_payment_ui.py` and the automated suite.
+This guide walks a tester through the full merchant and buyer flows. It covers
+both the WhatsApp command interface and the buyer-facing Paystack checkout.
 
 ## Prerequisites
 
-- Paystack **test-mode** keys (`PAYSTACK_SECRET_KEY`, and a `PAYSTACK_PUBLIC_KEY` only if you add client-side SDK work). Never use live keys.
-- A whitelisted payout account on the merchant whose link you are testing (`merchant_payout_accounts.paystack_subaccount_code`). Checkout requires a subaccount code; without one the page returns 503 and the link is never sent to Paystack.
-- `CHECKOUT_BASE_URL` set to the public root (e.g. `https://confam.onrender.com/pay`) so Paystack can route the buyer back after payment. It must end in `/pay` when served by the unified app.
+- Paystack **test-mode** keys (`PAYSTACK_SECRET_KEY`). Never use live keys.
+- A ConFam WhatsApp number (the Meta Cloud API number the merchant messages).
+- Your WhatsApp number registered as a test recipient in Meta's App dashboard.
+- `CHECKOUT_BASE_URL` set to `https://confam-xq4m.onrender.com/pay`.
 
-## What the flow is
+---
 
-1. Admin creates a payment link for a merchant: `POST /links` with `X-Admin-Key` → returns `checkout_url` + `link_id`.
-2. Buyer opens `GET /pay/{link_id}` and sees the item, amount, merchant name, and an email field for the receipt.
-3. Buyer picks a method and is redirected to Paystack's hosted page:
-   - card → `channels: ["card"]`
-   - bank transfer → `channels: ["bank_transfer"]`
-   - bank (incl. OPay) → `channels: ["bank"]`  *(OPay is a widget option inside Paystack's "bank" channel, not a separate channel)*
-   - USSD → `channels: ["ussd"]`
-4. The page polls `GET /pay/{link_id}/status` every 3 seconds (max 5 minutes) and shows confirmation ("Payment received") when the webhook flips the link to `logged`.
-5. The Paystack webhook (`POST /webhooks/paystack`, HMAC-verified) is the only thing that moves money state. The browser callback is decorative — ConFam never trusts the `reference`/`trxref` query params.
+## Merchant flow (WhatsApp commands)
 
-## Manual test script
+All commands are sent to the ConFam WhatsApp number. Responses arrive
+in the same thread within a few seconds.
 
-### Happy path (per method)
+### 1. Register
 
-| Method | Expected |
-|---|---|
-| card | Redirect to Paystack hosted page → complete a test card → webhook → page shows "Payment received", link `logged` |
-| bank_transfer | Redirect → Paystack shows bank details → buyer pays → webhook → confirmation |
-| bank / OPay | Redirect → Paystack bank widget (OPay listed) → pay → webhook → confirmation |
-| ussd | Redirect → Paystack shows USSD code → pay → webhook → confirmation |
-
-For each: after redirect back, verify the sale is recorded exactly once:
-`SELECT * FROM ledger_entries WHERE link_id = '<link>'` (one row), and the link status is `logged`.
-
-### Error / edge cases
-
-- **Expired link:** open a link past `PAYMENT_LINK_EXPIRY_SECONDS` → 410 page, "This payment link has expired".
-- **Already-paid link:** open a `logged` link → page shows paid state, no "Pay" button.
-- **No payout account / no subaccount:** create a link for a merchant with no active payout account → `POST /pay/{link_id}/pay` returns 503 with a clear message; Paystack is never called.
-- **Bad method:** `POST /pay/{link_id}/pay` with `method: "opay"` → 422 (OPay is not a top-level method; use `bank`).
-- **Bad email:** missing or invalid receipt email → 422.
-- **Unknown link:** `GET /pay/nonexistent` → 404 page.
-- **Duplicate charge (the important one):** pay once (link → `logged`), then send a *second, different-reference* `charge.success` webhook for the same link. Expect: no second sale, link stays `logged`, log + Sentry error saying a manual refund is required. There must be exactly one line in `ledger_entries`.
-- **Retried webhook (same reference):** resend the exact same `charge.success` → returns 200, does nothing (UNIQUE constraint on `rail_reference`), no Sentry alert.
-- **Late payment:** let the link expire, then send a webhook anyway → the sale is still recorded (marked `applied_after_expiry`), link becomes `logged`, warning log only, no Sentry.
-
-## Where to look in the DB
-
-```sql
--- was a sale written, exactly once, with the right disposition?
-SELECT disposition, processed FROM rail_events WHERE link_id = '<link>';
-SELECT COUNT(*) FROM ledger_entries WHERE link_id = '<link>';
-SELECT status FROM payment_links WHERE link_id = '<link>';
+```
+REGISTER <business name>
 ```
 
-Dispositions: `applied` (normal), `applied_after_expiry` (late), `duplicate` (second charge — needs manual refund).
+If no country suffix is given, ConFam replies with **two tappable buttons**:
+Nigeria / Ghana. Tap the correct one — registration completes immediately.
 
-## Caveats
+To skip buttons and register directly with a typed suffix:
+```
+REGISTER Adaeze Fashion Store GHANA
+REGISTER Adaeze Fashion Store NIGERIA
+```
 
-- **Test mode ≠ live.** Paystack test cards settle no real money; OPay/USSD behavior in test mode must be confirmed on Paystack's dashboard before trusting it in a demo.
-- **Don't point real merchants at the checkout URL in test mode** — a buyer could think they were charged.
-- Verify subaccount routing in the Paystack dashboard (the `subaccount_code` in the log must match the payout account).
+### 2. Onboard (set payout account)
+
+**Option A — tap to select (recommended):**
+
+Send bare `ONBOARD`. ConFam replies with a tappable list of up to 9 common
+banks / mobile money providers + an "Other" row. Tap your bank. ConFam asks
+for your account number. Reply with your 10-digit account number. Done.
+
+**Option B — fully typed:**
+```
+ONBOARD <10-digit account number> <bank name>
+```
+Examples:
+```
+ONBOARD 0123456789 GTBank
+ONBOARD 0123456789 Access Bank
+ONBOARD 0241234567 MTN MoMo
+```
+
+Bank name is fuzzy-matched — "GTBank", "Guaranty Trust", "GT Bank PLC" all work.
+If the name is ambiguous, ConFam replies with up to 3 candidate suggestions.
+
+Account number format:
+- Nigeria: 10-digit NUBAN
+- Ghana banks (ghipps): 10-digit account number
+- Ghana mobile money: 10-digit subscriber phone number (e.g. 0241234567 for MTN)
+
+### 3. Create a payment link
+
+```
+PAY <amount> <description>
+```
+Example:
+```
+PAY 2500 Jordan — 1 pair sneakers
+```
+ConFam replies with a `pay.confam.co/<link_id>` URL. Paste it to your buyer.
+Amount is in naira (NGN) for Nigeria merchants, cedis (GHS) for Ghana.
+
+### 4. Get a sales statement
+
+```
+LEDGER
+```
+ConFam sends a PDF of your confirmed sales as a WhatsApp document attachment.
+
+### 5. Update payout account
+
+```
+UPDATE <account number> <bank name>
+```
+A 48-hour cooling-off window applies. ConFam sends an immediate notification.
+Reply `CANCEL` within 48 hours to abort the change.
+
+---
+
+## Buyer flow (checkout page)
+
+1. Buyer opens the link pasted by the merchant.
+2. Page shows the item, amount, and merchant name, plus an email field.
+3. Buyer picks a payment method and is redirected to Paystack's hosted page.
+4. Page polls every 3 seconds (max 5 min) and shows "Payment received ✅"
+   once the Paystack webhook confirms.
+
+**Paystack test card:**
+```
+Number: 4084 0840 8408 4081
+Expiry: any future date   CVV: 408
+```
+
+---
+
+## Verifying a payment in the DB
+
+```sql
+SELECT disposition, processed FROM rail_events  WHERE link_id = '<link>';
+SELECT COUNT(*)               FROM ledger_entries WHERE link_id = '<link>';
+SELECT status                 FROM payment_links  WHERE link_id = '<link>';
+```
+
+Expected after a clean payment: `disposition=applied`, `processed=true`,
+`COUNT=1`, `status=logged`.
+
+---
+
+## Edge cases
+
+| Scenario | Expected |
+|---|---|
+| Expired link | 410 — "This payment link has expired" |
+| Already-paid link | Page shows paid state, no Pay button |
+| Duplicate webhook (same reference) | 200, idempotent — no second ledger entry |
+| Second charge on same link (different reference) | Rejected — link already logged |
+| Unknown link | 404 |
+| Bank name not found | Reply with up to 3 closest candidates |
+| Bare `ONBOARD` | Interactive bank list message sent |
+| `REGISTER` with no country | Country buttons sent (Nigeria / Ghana) |
+| Account number after pending-bank TTL expires (>10 min) | Treated as normal text, not completing onboard |
+| `CANCEL` with no pending change | Polite "nothing to cancel" reply |
+
+---
+
+## Admin endpoints (bypass WhatsApp — useful for direct settlement-engine tests)
+
+```bash
+# Create a merchant
+curl -X POST https://confam-xq4m.onrender.com/merchants \
+  -H "X-Admin-Key: <your-admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"whatsapp_number": "+234...", "business_name": "Test Store"}'
+
+# Create a payment link
+curl -X POST https://confam-xq4m.onrender.com/links \
+  -H "X-Admin-Key: <your-admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"merchant_id": "...", "amount_minor_units": 75000, "currency": "NGN", "description": "Item"}'
+```
+
+---
+
+## Notes
+
+- Test mode only — Paystack test cards settle no real money.
+- Do not point real merchants at the service while `PAYSTACK_SECRET_KEY` is a
+  test key — a buyer could think they were charged.
+- OPay appears inside Paystack's "bank" channel widget — it is not a separate
+  top-level method in ConFam.

@@ -141,6 +141,10 @@ curl -s -X POST http://localhost:8000/merchants/<merchant_id>/payout-account \
 
 Expected: `{"merchant_status": "active", "paystack_subaccount_code": "ACCT_...", ...}`
 
+Note: the REST endpoint still accepts `bank_code` directly. The WhatsApp
+`ONBOARD` command now accepts a bank *name* (fuzzy-matched) or uses the
+interactive tap-to-select list. Both paths write the same `payout_accounts` row.
+
 ### Step 4: Set your WhatsApp number as confam_thread_id
 
 Meta sends your number as **bare digits** — e.g. `2348012345678` for +234 801 234 5678 (no `+`, no `whatsapp:` prefix):
@@ -203,10 +207,8 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm test
 This runs all tests inside the Docker network against the containerised Postgres, using the same `confam_app`/`confam_migrator` role separation as CI. Expected output:
 
 ```
-33 passed, 4 skipped
+100+ passed
 ```
-
-The 4 skips are intentional placeholders for tests that require the settlement engine's payment confirmation logic — those will be replaced in the next task.
 
 ---
 

@@ -12,7 +12,7 @@ Migrations run at container start via `db/render_bootstrap.sh` before uvicorn.
 ```
 Internet → HTTPS (Render-managed TLS)
     │
-  confam-xxxx.onrender.com
+  confam-xq4m.onrender.com
     │
     ├── /webhooks/whatsapp  — messaging (Meta webhook, public)
     ├── /webhooks/paystack  — settlement engine (Paystack webhook, public)
@@ -56,7 +56,7 @@ Fill in every sync:false variable:
   WHATSAPP_ACCESS_TOKEN   — permanent System User token (NOT the 24h temp token)
   WHATSAPP_APP_SECRET     — Meta App → Settings → Basic → App Secret
   WHATSAPP_VERIFY_TOKEN   — any string you choose
-  CHECKOUT_BASE_URL       — https://confam-xxxx.onrender.com/pay
+  CHECKOUT_BASE_URL       — https://confam-xq4m.onrender.com/pay
   PAYMENT_LINK_SIGNING_SECRET — openssl rand -base64 32
   SENTRY_DSN              — optional (sentry.io)
 
@@ -76,17 +76,17 @@ Watch logs for:
   INFO: Application startup complete.
 
 Health check:
-  curl https://confam-xxxx.onrender.com/health
+  curl https://confam-xq4m.onrender.com/health
 
 ---
 
 ## Step 4: Update webhook URLs (you do this manually)
 
 Paystack: Dashboard → Settings → API Keys & Webhooks
-  https://confam-xxxx.onrender.com/webhooks/paystack
+  https://confam-xq4m.onrender.com/webhooks/paystack
 
 Meta WhatsApp: App Dashboard → WhatsApp → Configuration → Webhook
-  Callback URL: https://confam-xxxx.onrender.com/webhooks/whatsapp
+  Callback URL: https://confam-xq4m.onrender.com/webhooks/whatsapp
   Verify token: whatever you set for WHATSAPP_VERIFY_TOKEN
   Click "Verify and Save"
 
@@ -94,12 +94,12 @@ Meta WhatsApp: App Dashboard → WhatsApp → Configuration → Webhook
 
 ## Calling admin endpoints
 
-  curl -X POST https://confam-xxxx.onrender.com/merchants \
+  curl -X POST https://confam-xq4m.onrender.com/merchants \
     -H "X-Admin-Key: your-admin-key" \
     -H "Content-Type: application/json" \
     -d '{"whatsapp_number": "+234...", "business_name": "My Store"}'
 
-  curl -X POST https://confam-xxxx.onrender.com/links \
+  curl -X POST https://confam-xq4m.onrender.com/links \
     -H "X-Admin-Key: your-admin-key" \
     -H "Content-Type: application/json" \
     -d '{"merchant_id": "...", "amount_minor_units": 75000, "currency": "NGN", "description": "Item"}'
@@ -128,3 +128,33 @@ INSTANCE HOURS: ~750 free hours/month per workspace = one always-on service.
   git push origin main   # triggers auto-deploy
 
 Or: Render dashboard → confam → Manual Deploy → Deploy latest commit.
+
+---
+
+## Schema migrations on Render
+
+Migrations run automatically at container start via `db/render_bootstrap.sh`.
+To verify all migrations are applied after a new deploy:
+
+  curl -s https://confam-xq4m.onrender.com/health
+  # {"status":"ok","service":"confam"}
+
+If a migration fails, the bootstrap script exits non-zero and Render marks the
+deploy as failed. Check the deploy logs in the Render dashboard.
+
+Current migrations applied (001–015):
+  001  create_merchants
+  002  create_payout_accounts
+  003  create_payment_links
+  004  create_rail_events
+  005  create_ledger_entries
+  006  harden_ledger_append_only
+  007  create_roles_and_grants
+  008  add_subaccount_to_payout_accounts
+  009  add_merchant_onboarding_fields
+  010  payout_account_change_flow
+  011  payout_accounts_rls_cancel
+  012  render_single_role_adaptation
+  013  flag_rail_event_disposition
+  014  add_merchant_country          ← Nigeria/Ghana country field
+  015  pending_bank_selection        ← tap-to-select ONBOARD state

@@ -1,35 +1,72 @@
-# messaging
+# services/messaging
 
-**Responsibility:** The ConFam-facing WhatsApp integration — the merchant's interface for generating payment links and receiving settlement notifications.
+**Responsibility:** The merchant-facing WhatsApp integration — receiving commands
+from merchants and sending payment links, confirmations, and sales statements.
 
-See [`docs/ARCHITECTURE.md` §3.1](../../docs/ARCHITECTURE.md) for the authoritative description of this component.
+---
 
 ## What belongs here
 
-- Receiving inbound messages from merchants in the ConFam thread (WhatsApp Business API webhook handler).
-- Parsing merchant-supplied transaction details (item description, amount, buyer identifier).
-- Dispatching payment link generation requests to `services/settlement-engine`.
-- Delivering settlement notifications back to the merchant in the ConFam thread.
+- Receiving inbound messages from merchants via the Meta WhatsApp Cloud API.
+- Parsing and routing WhatsApp commands (REGISTER, ONBOARD, PAY, LEDGER, UPDATE, CANCEL).
+- Sending interactive messages (country buttons for REGISTER, bank list for ONBOARD).
+- Generating payment links (via `confam.links.create_link`).
+- Sending payment-confirmed notifications to merchants.
+- Generating and delivering PDF sales statements (LEDGER command).
 
 ## What does NOT belong here
 
-- Anything that talks to a buyer directly. ConFam never messages a buyer through any channel — the merchant relays the payment link manually. Code that attempts to initiate outbound messages to buyers must not exist in this service.
-- Any payment or payout logic. This layer is strictly a messaging interface — it delegates to `services/settlement-engine` for all financial operations.
+- Messaging buyers directly. ConFam never messages thread 1 (buyer-merchant).
+  The merchant pastes the link manually.
+- Any payment or payout logic. This layer is a messaging interface only — all
+  financial operations go through `confam.paystack`, `confam.ledger`, etc.
+
+---
 
 ## Stack
 
-- **Language/framework:** Python / FastAPI (OQ-002 resolved)
-- **BSP:** Twilio (recommended) or 360dialog — pilot uses BSP, not direct Meta Cloud API (OQ-001 resolved)
-- **Logging:** `structlog` (OQ-009 resolved)
+- **Language/framework:** Python / FastAPI
+- **WhatsApp API:** Meta Cloud API (direct — not via Twilio BSP)
+- **Logging:** `structlog`
+
+---
+
+## Command routing
+
+```
+REGISTER <name> [GHANA|NIGERIA]   → country buttons (if no suffix) or direct register
+ONBOARD                           → interactive bank list message
+ONBOARD <account> <bank name>     → typed onboard (fuzzy bank-name match)
+PAY <amount> <description>        → create payment link
+LEDGER                            → PDF sales statement
+UPDATE <account> <bank name>      → payout account change (48h cooling-off)
+CANCEL / STOP                     → cancel pending payout change
+```
+
+Interactive replies (from tapping buttons/list rows):
+```
+button_reply  register:<CC>:<name>  → complete REGISTER for that country
+list_reply    bank:<code>           → store pending bank, ask for account number
+list_reply    bank:other            → redirect to typed ONBOARD instructions
+```
+
+Pending bank selection state:
+- Stored in `merchants.pending_bank_code` + `merchants.pending_bank_selected_at`
+- TTL: 10 minutes (`PENDING_BANK_SELECTION_TTL_SECONDS` in `confam/interactive.py`)
+- A bare 10-digit message within TTL completes onboarding; after TTL it is ignored
+
+---
+
+## Failure policy (Rule 10)
+
+| Integration | Unreachable at link-creation time | Webhook never arrives |
+|---|---|---|
+| Meta Cloud API | Log error, link created successfully, merchant gets no reply — they can still share the link manually | N/A — outbound only |
+| Paystack bank/resolve | Rate-limit or error reply sent to merchant; no payout account written | N/A |
+| Paystack subaccount create | Error reply sent; merchant stays pending_verification | N/A |
+
+---
 
 ## Status
 
-**Scaffolded — not yet implemented.**
-
-## Resolved decisions affecting this component
-
-- OQ-001: Twilio BSP for the pilot. Account creation and WhatsApp Business verification must start now — it has lead time.
-- OQ-010: ConFam has no footprint in thread 1 (buyer-merchant). Merchant brings their own number.
-- OQ-002: Python / FastAPI.
-
-Failure policy (Rule 10) for WhatsApp API unreachability must be documented here before this service ships.
+**Implemented and live.**
