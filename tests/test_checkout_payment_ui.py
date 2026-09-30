@@ -777,6 +777,35 @@ class TestCheckoutPageHtml:
         assert _format_amount(250050, "NGN") == "₦2,500.50"
         assert _format_amount(123456789, "NGN") == "₦1,234,567.89"
 
+    def test_ghanaian_cedi_is_shown_with_its_own_symbol(self):
+        """A Ghana merchant's link is GHS. Rendering it without a symbol (the
+        pre-Ghana behaviour) shows the buyer a bare number and no idea which
+        currency they are about to be charged in."""
+        from services.checkout.main import _format_amount
+
+        assert _format_amount(250000, "GHS") == "GH₵2,500"
+        assert _format_amount(250050, "GHS") == "GH₵2,500.50"
+
+    def test_ussd_is_not_offered_on_a_cedi_link(self):
+        """USSD is a Paystack Nigeria channel. A Ghanaian buyer shown it can
+        only fail, so the page must not offer it."""
+        from services.checkout.main import _offered_methods
+
+        ngn = [method for method, _label, _hint in _offered_methods("NGN")]
+        assert ngn == ["card", "bank_transfer", "bank", "ussd"]
+
+        ghs = [method for method, _label, _hint in _offered_methods("GHS")]
+        assert ghs == ["card", "bank_transfer", "bank"]
+
+    def test_every_offered_method_is_a_channel_the_server_accepts(self):
+        """A button naming a method the pay endpoint rejects is a dead end for
+        the buyer. The page and the server must offer the same set."""
+        from services.checkout.main import _offered_methods
+
+        for currency in ("NGN", "GHS"):
+            offered = {method for method, _l, _h in _offered_methods(currency)}
+            assert offered <= set(METHOD_CHANNELS)
+
 
 # ---------------------------------------------------------------------------
 # 6. Unified app mount — the route the buyer actually hits on Render

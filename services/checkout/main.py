@@ -217,8 +217,12 @@ def _to_detail(link, merchant_name: str | None) -> CheckoutDetail:
 # Plain HTML + vanilla JS, no build step, no framework, no third-party assets.
 # Buyers open this from a WhatsApp link on a phone, often on mobile data, in
 # whatever browser WhatsApp hands them. That drives every decision below:
-# inline everything (no extra round trips), no web fonts, 44px+ tap targets,
+# inline everything (no extra round trips), no web fonts, 54px+ tap targets,
 # 16px inputs (stops iOS zoom-on-focus), and a layout that works at 320px.
+#
+# The palette is ConFam's (deep green, dark surfaces, one bright accent) so the
+# page a buyer pays on is recognisably the same product as the site that sold
+# them the thing. See landing/src/styles/site.css for the tokens.
 
 # Stellar/Lobstr is deliberately absent from this page.
 # OQ-023  — whether Lobstr accepts an external SEP-24 interactive URL handed to
@@ -231,6 +235,12 @@ def _to_detail(link, merchant_name: str | None) -> CheckoutDetail:
 # than nothing: it promised a button that was never coming.
 
 
+# Currency symbols shown to the buyer. "GH₵" (not a bare cedis sign) matches
+# what the merchant sees in the WhatsApp confirmation, so the two surfaces of
+# the same sale never disagree about the amount.
+CURRENCY_SYMBOLS = {"NGN": "₦", "GHS": "GH₵"}
+
+
 def _format_amount(amount_minor_units: int, currency: str) -> str:
     """
     Format minor units for display.
@@ -239,12 +249,188 @@ def _format_amount(amount_minor_units: int, currency: str) -> str:
     12,345.67 but 123456789/100 does not round-trip cleanly, and Rule 6 says
     no floats in monetary values — that holds for the string a buyer reads too.
     """
-    symbol = {"NGN": "₦"}.get(currency, "")
+    symbol = CURRENCY_SYMBOLS.get(currency, "")
     whole, minor = divmod(int(amount_minor_units), 100)
     grouped = f"{whole:,}"
     if minor:
         return f"{symbol}{grouped}.{minor:02d}"
     return f"{symbol}{grouped}"
+
+
+# Shared stylesheet for both buyer-facing pages. A plain module-level string
+# (not an f-string) so the CSS braces need no doubling, and one definition
+# instead of two that can drift apart.
+#
+# Deliberately no @font-face and no web-font link: a buyer opens this from a
+# WhatsApp link on mobile data, and a font request that stalls is a payment
+# page that stalls. System fonts on the platform, ConFam's palette.
+_CHECKOUT_CSS = """
+    :root {
+      color-scheme: dark;
+      --green: #1db974;
+      --green-dark: #17a065;
+      --green-glow: rgba(29, 185, 116, 0.14);
+      --surface: #111f17;
+      --raised: #172b20;
+      --ink: #0b1812;
+      --border: rgba(255, 255, 255, 0.09);
+      --border-light: rgba(255, 255, 255, 0.16);
+      --white: #ffffff;
+      --text: #eef5f0;
+      --text-soft: #9bbfaa;
+      --text-faint: #6b9279;
+      --danger-bg: rgba(248, 113, 113, 0.12);
+      --danger-border: rgba(248, 113, 113, 0.4);
+      --danger-text: #fca5a5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      max-width: 480px; margin: 0 auto; padding: 20px 18px 48px;
+      color: var(--text); background: var(--surface); line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+    }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .wordmark {
+      font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em; color: var(--white);
+    }
+    .wordmark .dot { color: var(--green); }
+    .secure {
+      font-size: 0.75rem; font-weight: 600; color: var(--text-faint);
+      display: inline-flex; align-items: center; gap: 0.35rem;
+    }
+    .secure::before {
+      content: ""; width: 0.4rem; height: 0.4rem; border-radius: 50%;
+      background: var(--green);
+    }
+    .card {
+      background: var(--raised); border: 1px solid var(--border-light);
+      border-radius: 14px; padding: 1.1rem 1.2rem 1.3rem;
+    }
+    .merchant-row { display: flex; align-items: center; gap: 0.7rem; }
+    .avatar {
+      width: 2.2rem; height: 2.2rem; border-radius: 50%; flex: none;
+      background: var(--green); color: var(--ink);
+      display: grid; place-items: center; font-weight: 800; font-size: 0.9rem;
+    }
+    .merchant { color: var(--white); font-size: 0.95rem; font-weight: 700; margin: 0; }
+    .verified { color: var(--text-faint); font-size: 0.78rem; margin: 0.1rem 0 0; }
+    .amount {
+      font-size: 2.4rem; font-weight: 800; margin: 1rem 0 0.2rem;
+      letter-spacing: -0.02em; color: var(--white);
+    }
+    .description { color: var(--text-soft); margin: 0; font-size: 0.95rem; }
+    label {
+      display: block; font-weight: 600; font-size: 0.95rem;
+      color: var(--white); margin: 22px 0 6px;
+    }
+    .hint { font-weight: 400; color: var(--text-faint); font-size: 0.85rem; }
+    input[type=email] {
+      width: 100%; padding: 15px 14px; font-size: 16px;
+      border: 1px solid var(--border-light); border-radius: 10px;
+      margin-bottom: 18px; background: var(--raised); color: var(--text);
+      font-family: inherit;
+    }
+    input[type=email]::placeholder { color: var(--text-faint); }
+    input[type=email]:focus {
+      outline: 2px solid var(--green); outline-offset: 1px; border-color: var(--green);
+    }
+    input[type=email]:disabled { opacity: 0.6; }
+    .method { margin-bottom: 10px; }
+    .btn {
+      display: block; width: 100%; padding: 16px 15px;
+      font-size: 1rem; font-weight: 700; font-family: inherit;
+      border: 1.5px solid transparent; border-radius: 10px; cursor: pointer;
+      background: var(--green); color: var(--ink); text-align: center;
+      min-height: 54px;
+    }
+    .btn:hover:not(:disabled) { background: var(--green-dark); }
+    .btn:focus-visible { outline: 3px solid rgba(29, 185, 116, 0.45); outline-offset: 2px; }
+    .btn.secondary {
+      background: transparent; color: var(--white); border-color: var(--border-light);
+    }
+    .btn.secondary:hover:not(:disabled) {
+      background: var(--green-glow); border-color: var(--green); color: var(--white);
+    }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .method-hint {
+      color: var(--text-faint); font-size: 0.8rem; margin: 0.35rem 0 0; text-align: center;
+    }
+    .err {
+      background: var(--danger-bg); border: 1px solid var(--danger-border);
+      color: var(--danger-text); padding: 12px 14px; border-radius: 10px;
+      margin-top: 16px; font-size: 0.92rem;
+    }
+    .err[hidden] { display: none; }
+    .status {
+      margin-top: 20px; padding: 22px 18px; border-radius: 14px; text-align: center;
+      background: var(--raised); border: 1px solid var(--border-light);
+    }
+    .status h2 { margin: 0 0 8px; font-size: 1.15rem; color: var(--white); }
+    .status p { margin: 0; color: var(--text-soft); font-size: 0.95rem; }
+    .status .mark { font-size: 1.6rem; line-height: 1; margin-bottom: 10px; }
+    .status.logged { background: var(--green-glow); border-color: rgba(29, 185, 116, 0.4); }
+    .status.logged .mark { color: var(--green); }
+    .status.failed, .status.expired {
+      background: var(--danger-bg); border-color: var(--danger-border);
+    }
+    .spinner {
+      width: 22px; height: 22px; margin: 0 auto 14px;
+      border: 2.5px solid rgba(29, 185, 116, 0.25); border-top-color: var(--green);
+      border-radius: 50%; animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+    .foot {
+      margin: 22px 0 0; font-size: 0.8rem; color: var(--text-faint); text-align: center;
+    }
+    .foot code { font-size: 0.78rem; }
+    .settles {
+      margin: 14px 0 0; font-size: 0.82rem; color: var(--text-soft); text-align: center;
+      background: var(--raised); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 14px;
+    }
+  """
+
+
+# Payment methods offered on the page, as (method, button label, hint).
+# Card leads because it is the only channel that settles instantly everywhere.
+# Labels are kept in sync with METHOD_CHANNELS in services/checkout/pay.py —
+# a button that names a channel the server does not accept is a dead end.
+_METHOD_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("card", "Pay with card", "Visa, Mastercard, Verve"),
+    ("bank_transfer", "Pay with bank transfer", "Transfer straight from your bank app"),
+    ("bank", "Pay with bank / OPay", "Pay-with-Bank, including OPay"),
+    ("ussd", "Pay with USSD", "Dial a code on your phone"),
+)
+
+
+def _offered_methods(currency: str) -> list[tuple[str, str, str]]:
+    """
+    The methods to render for this link's currency.
+
+    USSD is a Nigerian rail — Paystack does not offer it on GHS transactions —
+    so a Ghanaian buyer is never shown a button that can only fail. Every other
+    channel is offered to everyone.
+    """
+    if currency == "NGN":
+        return list(_METHOD_ROWS)
+    return [row for row in _METHOD_ROWS if row[0] != "ussd"]
+
+
+def _render_method(method: str, label: str, hint: str) -> str:
+    """One method button plus its hint line."""
+    variant = "" if method == "card" else " secondary"
+    return (
+        f'        <div class="method">\n'
+        f'          <button class="btn{variant}" type="submit" '
+        f'data-method="{method}">{label}</button>\n'
+        f'          <p class="method-hint">{hint}</p>\n'
+        f"        </div>"
+    )
 
 
 def _api_base(request: Request, link_id: str) -> str:
@@ -267,7 +453,13 @@ def _render_checkout_page(
 ) -> str:
     amount_display = _format_amount(detail.amount_minor_units, detail.currency)
     merchant_display = detail.merchant_name or "this merchant"
+    avatar = (merchant_display.strip()[:1] or "C").upper()
     api = _api_base(request, detail.link_id)
+
+    methods_html = "\n".join(
+        _render_method(method, label, hint)
+        for method, label, hint in _offered_methods(detail.currency)
+    )
 
     # Embedded as JSON, not interpolated raw: a link_id is a UUID so this is
     # belt-and-braces, but the escaping below is what stops a description
@@ -286,69 +478,28 @@ def _render_checkout_page(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b1812">
   <title>ConFam — Pay {amount_display}</title>
-  <style>
-    :root {{ color-scheme: light; }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      max-width: 480px; margin: 0 auto; padding: 24px 20px 48px;
-      color: #14161a; background: #fff; line-height: 1.5;
-      -webkit-text-size-adjust: 100%;
-    }}
-    .merchant {{ color: #5a6270; font-size: 0.95rem; margin: 0 0 4px; }}
-    .amount {{ font-size: 2.25rem; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.02em; }}
-    .description {{ color: #3d4450; margin: 0 0 28px; }}
-    label {{ display: block; font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; }}
-    .hint {{ font-weight: 400; color: #6b7280; font-size: 0.85rem; }}
-    input[type=email] {{
-      width: 100%; padding: 14px; font-size: 16px;
-      border: 1px solid #cfd4dc; border-radius: 10px; margin-bottom: 20px;
-      background: #fff; color: inherit;
-    }}
-    input[type=email]:focus {{
-      outline: 2px solid #1a56db; outline-offset: 1px; border-color: #1a56db;
-    }}
-    input[type=email]:disabled {{ background: #f3f4f6; }}
-    .btn {{
-      display: block; width: 100%; padding: 15px; margin-bottom: 12px;
-      font-size: 1rem; font-weight: 600; font-family: inherit;
-      border: 1px solid transparent; border-radius: 10px; cursor: pointer;
-      background: #1a56db; color: #fff; text-align: center;
-      min-height: 52px;
-    }}
-    .btn:hover:not(:disabled) {{ background: #1743ac; }}
-    .btn:focus-visible {{ outline: 3px solid #93b4f7; outline-offset: 2px; }}
-    .btn.secondary {{ background: #fff; color: #1a56db; border-color: #b9c6e4; }}
-    .btn.secondary:hover:not(:disabled) {{ background: #f2f6ff; }}
-    .btn:disabled {{ opacity: 0.55; cursor: not-allowed; }}
-    .err {{
-      background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
-      padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; font-size: 0.92rem;
-    }}
-    .err[hidden] {{ display: none; }}
-    .status {{ padding: 20px; border-radius: 12px; text-align: center; }}
-    .status h2 {{ margin: 0 0 8px; font-size: 1.15rem; }}
-    .status p {{ margin: 0; color: #4b5563; font-size: 0.95rem; }}
-    .status.waiting {{ background: #eff6ff; border: 1px solid #bfdbfe; }}
-    .status.logged {{ background: #f0fdf4; border: 1px solid #bbf7d0; }}
-    .status.failed, .status.expired {{ background: #fef2f2; border: 1px solid #fecaca; }}
-    .spinner {{
-      width: 20px; height: 20px; margin: 0 auto 12px;
-      border: 2.5px solid #bfdbfe; border-top-color: #1a56db; border-radius: 50%;
-      animation: spin 0.9s linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    @media (prefers-reduced-motion: reduce) {{ .spinner {{ animation: none; }} }}
-    .foot {{ margin-top: 28px; font-size: 0.8rem; color: #8a919e; text-align: center; }}
-    .foot code {{ font-size: 0.78rem; }}
-  </style>
+  <style>{_CHECKOUT_CSS}</style>
 </head>
 <body>
   <main id="main">
-    <p class="merchant">Paying {_escape(merchant_display)}</p>
-    <p class="amount">{amount_display}</p>
-    <p class="description">{_escape(detail.description)}</p>
+    <div class="topbar">
+      <span class="wordmark">ConFam<span class="dot">.</span></span>
+      <span class="secure">Secure payment</span>
+    </div>
+
+    <div class="card">
+      <div class="merchant-row">
+        <span class="avatar" aria-hidden="true">{_escape(avatar)}</span>
+        <div>
+          <p class="merchant">Paying {_escape(merchant_display)}</p>
+          <p class="verified">This payment settles to their own bank account</p>
+        </div>
+      </div>
+      <p class="amount">{amount_display}</p>
+      <p class="description">{_escape(detail.description)}</p>
+    </div>
 
     <div id="error" class="err" role="alert" hidden></div>
 
@@ -367,16 +518,14 @@ def _render_checkout_page(
         placeholder="you@example.com"
       >
       <div id="methods">
-        <button class="btn" type="submit" data-method="card">Pay with card</button>
-        <button class="btn secondary" type="submit" data-method="bank_transfer">
-          Pay with bank transfer
-        </button>
-        <button class="btn secondary" type="submit" data-method="bank">
-          Pay with bank / OPay
-        </button>
-        <button class="btn secondary" type="submit" data-method="ussd">Pay with USSD</button>
+{methods_html}
       </div>
     </form>
+
+    <p class="settles">
+      ConFam never holds your money. This payment goes straight to
+      {_escape(merchant_display)}'s verified bank account.
+    </p>
 
     <p class="foot">
       You will be taken to Paystack to enter your card details.<br>
@@ -427,6 +576,8 @@ def _render_checkout_page(
       if (form) {{ form.remove(); }}
       var foot = document.querySelector(".foot");
       if (foot) {{ foot.remove(); }}
+      var settles = document.querySelector(".settles");
+      if (settles) {{ settles.remove(); }}
 
       var div = document.createElement("div");
       div.className = "status " + state;
@@ -434,6 +585,11 @@ def _render_checkout_page(
         var spinner = document.createElement("div");
         spinner.className = "spinner";
         div.appendChild(spinner);
+      }} else {{
+        var mark = document.createElement("div");
+        mark.className = "mark";
+        mark.textContent = STATE_MARKS[state] || "";
+        if (mark.textContent) {{ div.appendChild(mark); }}
       }}
       var h = document.createElement("h2");
       h.textContent = title;
@@ -444,6 +600,10 @@ def _render_checkout_page(
       main.appendChild(div);
       clearError();
     }}
+
+    // A status glyph the buyer reads at a glance before the words. Text, not
+    // emoji, so it renders identically on every phone.
+    var STATE_MARKS = {{ logged: "✓", failed: "✕", expired: "—" }};
 
     // The polled status is the ONLY thing this page treats as proof of payment.
     // The reference/trxref parameters Paystack appends to the callback URL are
@@ -605,18 +765,25 @@ def _render_invalid_page(message: str) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b1812">
   <title>ConFam — Link unavailable</title>
-  <style>
-    body {{
-      font-family: system-ui, sans-serif; max-width: 480px; margin: 48px auto;
-      padding: 0 24px; line-height: 1.5;
-    }}
-  </style>
+  <style>{_CHECKOUT_CSS}</style>
 </head>
 <body>
-  <h1>Link unavailable</h1>
-  <p>{_escape(message)}</p>
-  <p>If you believe this is an error, contact the merchant who sent you this link.</p>
+  <main id="main">
+    <div class="topbar">
+      <span class="wordmark">ConFam<span class="dot">.</span></span>
+    </div>
+    <div class="status expired">
+      <div class="mark">—</div>
+      <h2>Link unavailable</h2>
+      <p>{_escape(message)}</p>
+    </div>
+    <p class="settles">
+      If you believe this is an error, contact the merchant who sent you this
+      link — they can send you a new one.
+    </p>
+  </main>
 </body>
 </html>"""
 
