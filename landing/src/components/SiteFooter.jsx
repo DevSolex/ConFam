@@ -1,3 +1,5 @@
+import { COMPANY_NAME, CONTACT_EMAIL } from "../site.js";
+
 const columns = [
   {
     label: "Product",
@@ -57,14 +59,12 @@ export default function SiteFooter() {
 
         <div className="footer-legal">
           <span>
-            © 2026 <span className="placeholder-text">[Company legal name]</span>.
-            Payments confirmed and settled by Paystack.
+            © 2026 {COMPANY_NAME}. Payments confirmed and settled by Paystack.
           </span>
           <span>
             <a href="/privacy">Privacy policy</a>{" "}
             <a href="/terms">Terms of service</a>{" "}
-            {/* REPLACE-WITH-YOUR-EMAIL: point this mailto at your real address before launch */}
-            <a href="mailto:REPLACE-WITH-YOUR-EMAIL@example.com">Contact</a>
+            <a href={`mailto:${CONTACT_EMAIL}`}>Contact</a>
           </span>
         </div>
       </div>

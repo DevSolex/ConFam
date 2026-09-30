@@ -1,3 +1,4 @@
+import { COMPANY_NAME, CONTACT_EMAIL } from "../site.js";
 import {
   DraftBanner,
   LegalFooter,
@@ -22,13 +23,11 @@ export default function PrivacyPage() {
         {/* TODO: replace every placeholder below with reviewed copy once privacy requirements are settled */}
 
         <p>
-          ConFam is operated by{" "}
-          <span className="placeholder">[Company legal name]</span>, a Nigerian
-          company (<span className="placeholder">[RC number]</span>), with its
-          registered office at{" "}
-          <span className="placeholder">[registered address]</span>. We process
-          personal data in accordance with the Nigeria Data Protection Act and
-          the General Data Protection Regulation where it applies.
+          {COMPANY_NAME} is a company registered in Nigeria (
+          <span className="placeholder">[RC number]</span>) with its registered
+          office at <span className="placeholder">[registered address]</span>. We
+          process personal data in accordance with the Nigeria Data Protection
+          Act and the General Data Protection Regulation where it applies.
         </p>
 
         <h2>What we collect</h2>
@@ -87,10 +86,7 @@ export default function PrivacyPage() {
         <h2>Contact</h2>
         <p>
           Questions about this policy:{" "}
-          <span className="placeholder">
-            [privacy contact email or address]
-          </span>
-          .
+          <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
         </p>
       </main>
       <LegalFooter />

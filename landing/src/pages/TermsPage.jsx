@@ -1,3 +1,4 @@
+import { COMPANY_NAME, CONTACT_EMAIL } from "../site.js";
 import {
   DraftBanner,
   LegalFooter,
@@ -23,10 +24,9 @@ export default function TermsPage() {
 
         <h2>1. Who these terms cover</h2>
         <p>
-          These terms are between ConFam, operated by{" "}
-          <span className="placeholder">[Company legal name]</span> (
-          <span className="placeholder">[RC number]</span>), and the seller who
-          uses the service.
+          These terms are between {COMPANY_NAME}, a company registered in
+          Nigeria (<span className="placeholder">[RC number]</span>), and the
+          seller who uses the service.
         </p>
 
         <h2>2. The service</h2>
@@ -93,7 +93,7 @@ export default function TermsPage() {
         <h2>10. Contact</h2>
         <p>
           Questions about these terms:{" "}
-          <span className="placeholder">[contact email or address]</span>.
+          <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
         </p>
       </main>
       <LegalFooter />

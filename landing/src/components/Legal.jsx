@@ -1,3 +1,5 @@
+import { COMPANY_NAME } from "../site.js";
+
 export function LegalHeader() {
   return (
     <header className="legal-header">
@@ -22,7 +24,7 @@ export function LegalFooter() {
       <div className="contain">
         <div className="footer-legal" style={{ marginTop: 0 }}>
           <span>
-            © 2026 <span className="placeholder-text">[Company legal name]</span>
+            © 2026 {COMPANY_NAME}
           </span>
           <span>
             <a href="/privacy">Privacy policy</a>{" "}
