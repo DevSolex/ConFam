@@ -27,7 +27,11 @@ import psycopg2.extensions
 
 VALID_STATUSES = ("created", "opened", "paid", "settling", "logged", "expired", "failed")
 TERMINAL_STATUSES = ("paid", "settling", "logged", "expired", "failed")
-VALID_CURRENCIES = ("NGN",)
+# Ghana went live alongside Nigeria (migration 014 added the merchant country
+# and services/messaging/main.py derives GHS from it), so a link for a Ghanaian
+# merchant must be allowed to carry GHS. Rejecting it here meant a registered
+# Ghana merchant could never actually take a payment.
+VALID_CURRENCIES = ("NGN", "GHS")
 
 # Expiry window in seconds. Reads from environment; default 1800 (30 min).
 # OQ-012 resolved: 30 minutes from creation, or first successful payment.

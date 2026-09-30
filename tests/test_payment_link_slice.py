@@ -165,6 +165,16 @@ class TestValidateCreateInputs:
         with pytest.raises(LinkValidationError, match="not supported"):
             _validate_create_inputs(str(uuid.uuid4()), 1000, "USD", "item")
 
+    def test_accepts_both_supported_currencies(self):
+        """Ghana merchants are onboarded and issue GHS links. Rejecting GHS
+        meant a registered Ghana merchant could never take a payment."""
+        from confam.links import VALID_CURRENCIES
+
+        assert VALID_CURRENCIES == ("NGN", "GHS")
+
+        for currency in VALID_CURRENCIES:
+            _validate_create_inputs(str(uuid.uuid4()), 1000, currency, "item")
+
     def test_rejects_empty_description(self):
         with pytest.raises(LinkValidationError, match="description is required"):
             _validate_create_inputs(str(uuid.uuid4()), 1000, "NGN", "")
