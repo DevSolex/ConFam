@@ -1,4 +1,4 @@
-const WA_URL = "https://wa.me/2348051338460?text=Hi%2C%20I%27d%20like%20to%20join%20the%20ConFam%20pilot";
+import { WHATSAPP_URL } from "../site.js";
 
 export default function Pricing() {
   return (
@@ -9,23 +9,23 @@ export default function Pricing() {
           Plans that scale with<br />your sales, not your stress.
         </h2>
         <p className="section-sub">
-          Free while we learn together. We'll agree pricing with you before
-          charging anything.
+          Free to start taking payments. We'll agree any paid plan with you in
+          writing before we charge anything.
         </p>
 
         <div className="pricing-grid">
-          {/* Pilot — free */}
+          {/* Starter — free */}
           <div className="price-card featured">
             <div>
               <div className="price-badge">Current plan</div>
-              <div className="price-tier">Pilot</div>
+              <div className="price-tier">Starter</div>
               <div className="price-tagline">Everything you need to take your first WhatsApp payment.</div>
             </div>
             <div className="price-amount">
               ₦0 <span className="period">/ month</span>
             </div>
             <ul className="price-features">
-              <li>Unlimited confirmed orders during the pilot</li>
+              <li>Unlimited confirmed orders</li>
               <li>WhatsApp PAY command — one link per sale</li>
               <li>Auto-confirmed bank transfers via Paystack</li>
               <li>Naira ledger — every sale recorded permanently</li>
@@ -34,11 +34,11 @@ export default function Pricing() {
             </ul>
             <a
               className="btn arrow"
-              href={WA_URL}
+              href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
             >
-              Join the pilot — free
+              Start free on WhatsApp
             </a>
           </div>
 
@@ -52,18 +52,18 @@ export default function Pricing() {
               Coming soon
             </div>
             <ul className="price-features">
-              <li>Everything in Pilot</li>
+              <li>Everything in Starter</li>
               <li>Daily automatic reconciliation</li>
               <li>CSV export for your accountant</li>
               <li>Priority WhatsApp support</li>
             </ul>
             <a
               className="btn secondary"
-              href={WA_URL}
+              href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
             >
-              Join the waitlist
+              Get notified
             </a>
           </div>
 
@@ -84,11 +84,11 @@ export default function Pricing() {
             </ul>
             <a
               className="btn secondary"
-              href={WA_URL}
+              href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
             >
-              Join the waitlist
+              Talk to us
             </a>
           </div>
         </div>

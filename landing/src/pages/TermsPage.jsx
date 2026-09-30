@@ -33,8 +33,8 @@ export default function TermsPage() {
         <p>
           ConFam lets a seller create a one-time payment link for a sale made
           over WhatsApp and settle payment to the seller's own verified bank
-          account. We provide this service during a private pilot while these
-          terms are being finalised.
+          account. The service is running now; this draft describes it while
+          the final wording is settled with counsel.
         </p>
 
         <h2>3. Your account and your bank details</h2>
@@ -47,8 +47,8 @@ export default function TermsPage() {
 
         <h2>4. Fees</h2>
         <p>
-          The service is free during the pilot. We will agree pricing with you
-          before charging anything.
+          The Starter plan is free. We will agree any paid pricing with you in
+          writing before we charge anything.
         </p>
 
         <h2>5. Payments and records</h2>

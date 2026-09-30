@@ -1,13 +1,12 @@
+import { WHATSAPP_URL } from "../site.js";
+
 export default function AnnouncementBar() {
   return (
     <p className="announce">
-      ConFam is in private pilot — free for early merchants.{" "}
-      <a
-        href="https://wa.me/2348051338460?text=Hi%2C%20I%27d%20like%20to%20join%20the%20ConFam%20pilot"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Join now →
+      ConFam is live in Nigeria &amp; Ghana — take your first confirmed payment
+      today.{" "}
+      <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer">
+        Start now →
       </a>
     </p>
   );

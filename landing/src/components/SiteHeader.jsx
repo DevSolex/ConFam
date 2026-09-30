@@ -1,3 +1,5 @@
+import { WHATSAPP_URL } from "../site.js";
+
 export default function SiteHeader() {
   return (
     <header className="site-header">
@@ -13,13 +15,8 @@ export default function SiteHeader() {
         </ul>
 
         <div className="nav-cta">
-          <a
-            className="btn"
-            href="https://wa.me/2348051338460?text=Hi%2C%20I%27d%20like%20to%20join%20the%20ConFam%20pilot"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Message us on WhatsApp
+          <a className="btn" href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer">
+            Start on WhatsApp
           </a>
         </div>
       </nav>

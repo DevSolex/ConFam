@@ -1,10 +1,12 @@
+import { WHATSAPP_URL } from "../site.js";
+
 export default function Hero() {
   return (
     <section className="hero contain" id="top">
       <div className="hero-grid">
         {/* Left: headline + CTA */}
         <div>
-          <span className="hero-eyebrow">Private pilot — Nigeria &amp; Ghana</span>
+          <span className="hero-eyebrow">Live in Nigeria &amp; Ghana</span>
           <h1>
             Sell on WhatsApp.<br />
             Get paid without <span className="accent">the screenshot.</span>
@@ -18,11 +20,11 @@ export default function Hero() {
           <div className="hero-actions">
             <a
               className="btn arrow"
-              href="https://wa.me/2348051338460?text=Hi%2C%20I%27d%20like%20to%20join%20the%20ConFam%20pilot"
+              href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
             >
-              Message us on WhatsApp
+              Start on WhatsApp
             </a>
             <a className="btn secondary" href="#how">
               See how it works

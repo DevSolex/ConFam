@@ -19,7 +19,7 @@ const columns = [
   {
     label: "Company",
     links: [
-      { href: "#join", text: "Join the pilot" },
+      { href: "#join", text: "Start now" },
       { href: "/privacy", text: "Privacy policy" },
       { href: "/terms", text: "Terms of service" },
     ],
@@ -58,7 +58,7 @@ export default function SiteFooter() {
         <div className="footer-legal">
           <span>
             © 2026 <span className="placeholder-text">[Company legal name]</span>.
-            ConFam is in private pilot.
+            Payments confirmed and settled by Paystack.
           </span>
           <span>
             <a href="/privacy">Privacy policy</a>{" "}
