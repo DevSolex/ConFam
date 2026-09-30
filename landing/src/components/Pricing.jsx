@@ -88,7 +88,7 @@ export default function Pricing() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Message us on WhatsApp
+              Join the waitlist
             </a>
           </div>
         </div>
