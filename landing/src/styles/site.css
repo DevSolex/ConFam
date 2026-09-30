@@ -209,10 +209,13 @@ img { display: block; max-width: 100%; height: auto; }
   position: sticky;
   top: 0;
   z-index: 50;
-  background: color-mix(in srgb, var(--ink) 88%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
+  /* Nearly opaque: at 88% the hero's green accents and section glows read
+     through the bar while scrolling, which made the nav look washed out.
+     The blur stays for the few pixels of bleed it softens. */
+  background: color-mix(in srgb, var(--ink) 97%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .nav {

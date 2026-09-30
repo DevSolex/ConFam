@@ -16,7 +16,7 @@ export default function SiteHeader() {
 
         <div className="nav-cta">
           <a className="btn" href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer">
-            Start on WhatsApp
+            Start now
           </a>
         </div>
       </nav>

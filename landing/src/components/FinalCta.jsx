@@ -28,7 +28,7 @@ export default function FinalCta() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Start on WhatsApp
+            Start now
           </a>
           <a className="btn secondary" href="#how">
             See how it works
