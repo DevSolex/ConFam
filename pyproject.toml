@@ -79,3 +79,16 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+# Our code imports alembic/sqlalchemy only inside the migration files, and only
+# for `op`/`context`/`engine_from_config`. mypy 1.10.1 cannot parse the Cython
+# modules SQLAlchemy ships (it reports the unknown error code `untyped-decorator`
+# and then hits an internal error in alembic/operations/batch.py), which made the
+# CI lint job exit 2 before any test job could run. Skipping third-party internals
+# keeps the check pointed at our code instead of theirs.
+[[tool.mypy.overrides]]
+module = ["alembic.*", "sqlalchemy.*"]
+follow_imports = "skip"
+ignore_errors = true
+
