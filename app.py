@@ -215,51 +215,6 @@ def trigger_reconciliation() -> dict:
     return {"status": "complete", **summary}
 
 
-@app.post("/internal/db-reset", status_code=200)
-def db_reset() -> dict:
-    """Temporary one-off: wipe all data and apply pending migrations. Remove after use."""
-    import psycopg2 as _pg
-    # Must use the migrator URL — confam_app doesn't have TRUNCATE or ALTER TABLE.
-    # ALEMBIC_DATABASE_URL is the migrator connection string.
-    migrator_url = os.environ.get("ALEMBIC_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
-    if not migrator_url:
-        return {"status": "error", "detail": "no migrator URL set"}
-    # psycopg2 expects postgresql:// not postgresql+psycopg2://
-    migrator_url = migrator_url.replace("postgresql+psycopg2://", "postgresql://")
-    conn = _pg.connect(migrator_url)
-    conn.autocommit = True
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                TRUNCATE ledger_entries, rail_events, payment_links,
-                         payout_accounts, merchants
-                RESTART IDENTITY CASCADE;
-            """)
-            cur.execute("""
-                ALTER TABLE merchants
-                ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT 'nigeria';
-            """)
-            try:
-                cur.execute("""
-                    ALTER TABLE merchants ADD CONSTRAINT merchants_country_check
-                    CHECK (country IN ('nigeria', 'ghana'));
-                """)
-            except Exception:
-                pass
-            cur.execute("ALTER TABLE merchants ADD COLUMN IF NOT EXISTS pending_bank_code TEXT;")
-            cur.execute("ALTER TABLE merchants ADD COLUMN IF NOT EXISTS pending_bank_selected_at TIMESTAMPTZ;")
-            cur.execute("SELECT COUNT(*) FROM merchants;")
-            merchant_count = cur.fetchone()[0]
-            cur.execute("""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name = 'merchants' ORDER BY ordinal_position;
-            """)
-            columns = [r[0] for r in cur.fetchall()]
-    finally:
-        conn.close()
-    return {"status": "done", "merchants_remaining": merchant_count, "columns": columns}
-
-
 # ---------------------------------------------------------------------------
 # Checkout routes — mounted under /pay to avoid wildcard collision
 # ---------------------------------------------------------------------------
